@@ -73,6 +73,7 @@ async def list_documents(
             intent_id=doc.intent_id,
             intent_name=intent_name,
             status=doc.status,
+            error_message=doc.error_message,
             created_at=doc.created_at,
             updated_at=doc.updated_at
         ))
@@ -110,6 +111,7 @@ async def get_document(
         intent_id=doc.intent_id,
         intent_name=intent_name,
         status=doc.status,
+        error_message=doc.error_message,
         created_at=doc.created_at,
         updated_at=doc.updated_at
     )
@@ -391,7 +393,7 @@ async def delete_document(
 
     # Delete from vector store
     from app.services.document_service import delete_document_from_vector_store
-    delete_document_from_vector_store(document_id)
+    await delete_document_from_vector_store(document_id)
 
     await db.delete(document)
     await db.commit()
@@ -517,11 +519,36 @@ async def reparse_documents_batch(
     }
 
 
+def _overwrite_original_file(file_path: str, file_type: str, content: str) -> str:
+    """Overwrite original file with new content. Returns new file path."""
+    from docx import Document as DocxDocument
+    
+    original_path = Path(file_path)
+    
+    if file_type == "docx":
+        doc = DocxDocument()
+        for para in content.split('\n'):
+            doc.add_paragraph(para)
+        doc.save(file_path)
+        logger.info(f"Overwritten DOCX file: {file_path}")
+        return file_path
+    
+    elif file_type == "pdf":
+        txt_path = original_path.with_suffix('.txt')
+        with open(txt_path, 'w', encoding='utf-8') as f:
+            f.write(content)
+        logger.info(f"Saved edited content as TXT (PDF cannot be overwritten directly): {txt_path}")
+        return str(txt_path)
+    
+    return file_path
+
+
 class UpdateContentRequest(BaseModel):
     content: str
     chunk_size: Optional[int] = None
     chunk_overlap: Optional[int] = None
     rechunk: bool = True
+    overwrite_file: bool = True
 
 
 @router.put("/{document_id}/content")
@@ -530,37 +557,65 @@ async def update_document_content(
     request: UpdateContentRequest,
     db: AsyncSession = Depends(get_db)
 ):
-    """Update document content and reprocess"""
+    """Update document content, overwrite original file, and reprocess"""
+    logger.info(f"Updating document {document_id} content, overwrite_file={request.overwrite_file}...")
+    
     result = await db.execute(
         select(Document).where(Document.id == document_id)
     )
     document = result.scalar_one_or_none()
 
     if not document:
+        logger.error(f"Document {document_id} not found")
         raise HTTPException(status_code=404, detail="Document not found")
 
-    # Update chunk settings if provided
-    if request.chunk_size is not None:
-        settings.CHUNK_SIZE = request.chunk_size
-    if request.chunk_overlap is not None:
-        settings.CHUNK_OVERLAP = request.chunk_overlap
+    try:
+        # Update chunk settings if provided
+        if request.chunk_size is not None:
+            settings.CHUNK_SIZE = request.chunk_size
+            logger.info(f"Chunk size updated to {request.chunk_size}")
+        if request.chunk_overlap is not None:
+            settings.CHUNK_OVERLAP = request.chunk_overlap
+            logger.info(f"Chunk overlap updated to {request.chunk_overlap}")
 
-    # Update document content
-    document.content = request.content
-    document.status = "pending"
-    document.vector_ids = []
-    await db.commit()
+        # Overwrite original file if requested
+        file_saved = False
+        if request.overwrite_file and document.file_path:
+            try:
+                new_file_path = _overwrite_original_file(
+                    document.file_path,
+                    document.file_type,
+                    request.content
+                )
+                document.file_path = new_file_path
+                file_saved = True
+                logger.info(f"Original file overwritten: {new_file_path}")
+            except Exception as e:
+                logger.error(f"Failed to overwrite original file: {e}")
+                file_saved = False
 
-    # Trigger reprocessing
-    from app.services.tasks import process_document_async
-    import asyncio
-    asyncio.create_task(process_document_async(document.id, force_rechunk=request.rechunk))
+        # Update document content
+        document.content = request.content
+        document.status = "pending"
+        document.vector_ids = []
+        await db.commit()
+        logger.info(f"Document {document_id} content updated, status set to pending")
 
-    return {
-        "message": "Document content updated and queued for reprocessing",
-        "document_id": document_id,
-        "word_count": len(request.content.split())
-    }
+        # Trigger reprocessing
+        from app.services.tasks import process_document_async
+        import asyncio
+        asyncio.create_task(process_document_async(document.id, force_rechunk=request.rechunk))
+        logger.info(f"Reprocessing task created for document {document_id}")
+
+        return {
+            "message": "Document content updated and queued for reprocessing",
+            "document_id": document_id,
+            "word_count": len(request.content.split()),
+            "file_overwritten": file_saved
+        }
+    except Exception as e:
+        logger.error(f"Error updating document {document_id}: {e}")
+        raise
 
 
 @router.get("/{document_id}/status")

@@ -166,7 +166,14 @@ class VectorStore:
         if self.bm25 is None:
             self.bm25 = BM25Okapi(tokenized_texts)
         else:
-            self.bm25.corpus.extend(tokenized_texts)
+            # BM25Okapi doesn't support adding to corpus, need to rebuild
+            # Collect all existing tokenized texts
+            existing_corpus = []
+            for doc in self.documents:
+                existing_corpus.append(doc.page_content.split())
+            # Add new texts and rebuild
+            all_corpus = existing_corpus + tokenized_texts
+            self.bm25 = BM25Okapi(all_corpus)
 
         self.documents.extend(docs)
 

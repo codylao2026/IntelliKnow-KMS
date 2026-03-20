@@ -257,6 +257,39 @@ elif page == "KB Management":
         default_chunk_size = doc_settings.get("chunk_size", 256) if doc_settings else 256
         default_chunk_overlap = doc_settings.get("chunk_overlap", 50) if doc_settings else 50
 
+        # Display persistent operation results
+        if "operation_result" in st.session_state and st.session_state.operation_result:
+            result = st.session_state.operation_result
+            
+            if result.get("type") == "success":
+                st.markdown(f"""
+                <div style="background: #DCFCE7; padding: 16px; border-radius: 12px; border-left: 4px solid #22C55E; margin-bottom: 16px;">
+                    <h4 style="color: #15803D; margin: 0;">{result.get('icon', '✅')} {result.get('message', 'Success!')}</h4>
+                    {f'<p style="color: #166534; margin: 8px 0 0 0;">{result.get("detail", "")}</p>' if result.get("detail") else ""}
+                </div>
+                """, unsafe_allow_html=True)
+                
+                if result.get("files"):
+                    st.markdown(f"**{result.get('file_label', 'Files')}:**")
+                    for f in result.get("files", []):
+                        st.write(f"• {f}")
+                
+                if result.get("show_progress", False):
+                    st.markdown("**📊 Processing Progress:**")
+                    st.progress(result.get("progress", 0), text=result.get("progress_text", ""))
+                    
+            elif result.get("type") == "error":
+                st.markdown(f"""
+                <div style="background: #FEE2E2; padding: 16px; border-radius: 12px; border-left: 4px solid #EF4444; margin-bottom: 16px;">
+                    <h4 style="color: #DC2626; margin: 0;">❌ {result.get('message', 'Error!')}</h4>
+                </div>
+                """, unsafe_allow_html=True)
+                if result.get("errors"):
+                    for e in result.get("errors", []):
+                        st.error(e)
+        else:
+            st.session_state.operation_result = None
+
         # Fetch intents for filter
         intents, _ = api_request("GET", "/api/intents")
         intent_options = {"All Intents": None}
@@ -325,9 +358,15 @@ elif page == "KB Management":
                     else:
                         return f"{size_bytes / (1024 * 1024):.1f} MB"
 
-                # Clear stale selections
+                # Clear stale selections and build docs data map
                 doc_ids = [d["id"] for d in docs["items"]]
                 st.session_state.selected_docs = st.session_state.selected_docs.intersection(set(doc_ids))
+                
+                # Store document data for file list display
+                docs_data = {}
+                for d in docs["items"]:
+                    docs_data[d["id"]] = {"name": d["name"], "size": d["file_size"], "status": d["status"]}
+                st.session_state.selected_docs_data = docs_data
 
                 # Table header
                 header_cols = st.columns([0.5, 3, 1.5, 1, 1, 1.5, 1.5, 1])
@@ -363,7 +402,23 @@ elif page == "KB Management":
                     with row_cols[5]:
                         st.write(d.get('intent_name', '-'))
                     with row_cols[6]:
-                        st.write(format_status(d['status']))
+                        status = d.get('status', 'unknown')
+                        if status == 'failed':
+                            with st.expander("❌ Error"):
+                                error_msg = d.get('error_message', 'Unknown error')
+                                st.error(error_msg if error_msg else "Processing failed")
+                                # Quick fix button
+                                if st.button(f"🔄 Fix", key=f"fix_{doc_id}"):
+                                    fix_result, fix_err = api_request("POST", f"/api/documents/{doc_id}/reparse", data={})
+                                    if fix_err:
+                                        st.error(f"Failed: {fix_err}")
+                                    else:
+                                        st.success("Document queued for reprocessing")
+                                        st.rerun()
+                        elif status == 'processing':
+                            st.warning("⏳ Processing...")
+                        else:
+                            st.write(format_status(status))
                     
                     with row_cols[7]:
                         col_action1, col_action2 = st.columns(2)
@@ -431,29 +486,51 @@ elif page == "KB Management":
                     with col_edit:
                         if selected_count == 1:
                             doc_id = list(st.session_state.selected_docs)[0]
-                            if st.button("📝 Edit Content", key="btn_edit_content", help="Edit document content"):
+                            if st.button("✏️ Edit Content", key="btn_edit_content", help="Edit document content"):
                                 st.session_state.show_edit_modal = True
                                 st.session_state.edit_doc_id = doc_id
                                 st.rerun()
                         else:
-                            st.button("📝 Edit Content", disabled=True, key="btn_edit_disabled", help="Select only one document to edit")
+                            st.button("✏️ Edit Content", disabled=True, key="btn_edit_disabled", help="Select only one document to edit")
                     
                     with col_delete:
                         if st.button(f"🗑️ Delete ({selected_count})", key="btn_delete_docs", type="secondary"):
                             deleted = 0
                             failed = 0
+                            deleted_files = []
+                            failed_files = []
+                            
+                            # Get document names before deleting
+                            docs_data = st.session_state.get("selected_docs_data", {})
+                            
                             for doc_id in list(st.session_state.selected_docs):
+                                doc_name = docs_data.get(doc_id, {}).get("name", f"Document {doc_id}")
                                 result, err = api_request("DELETE", f"/api/documents/{doc_id}")
                                 if err:
                                     failed += 1
+                                    failed_files.append(doc_name)
                                 else:
                                     deleted += 1
+                                    deleted_files.append(doc_name)
                                     st.session_state.selected_docs.discard(doc_id)
                             
+                            # Store result in session state
                             if deleted > 0:
-                                st.success(f"✅ {deleted} document(s) deleted")
+                                st.session_state.operation_result = {
+                                    "type": "success",
+                                    "icon": "🗑️",
+                                    "message": f"{deleted} document(s) deleted successfully!",
+                                    "files": deleted_files,
+                                    "file_label": "🗑️ Deleted Files"
+                                }
+                            
                             if failed > 0:
-                                st.error(f"❌ {failed} document(s) failed to delete")
+                                st.session_state.operation_result = {
+                                    "type": "error",
+                                    "message": f"{failed} document(s) failed to delete",
+                                    "errors": failed_files
+                                }
+                            
                             st.rerun()
                 else:
                     st.info("☐ Select documents using checkboxes to enable batch actions")
@@ -505,22 +582,58 @@ elif page == "KB Management":
                         col_confirm, col_cancel = st.columns(2)
                         with col_confirm:
                             if st.button("✅ Start Reparsing", key="btn_start_reparse", type="primary"):
+                                # Get document names
+                                docs_data = st.session_state.get("selected_docs_data", {})
+                                selected_doc_ids = list(st.session_state.selected_docs)[:20]
+                                selected_names = [docs_data.get(did, {}).get("name", f"Document {did}") for did in selected_doc_ids]
+                                
                                 # Call batch reparse API
-                                doc_ids = list(st.session_state.selected_docs)[:20]
                                 payload = {
-                                    "document_ids": doc_ids,
+                                    "document_ids": selected_doc_ids,
                                     "chunk_size": chunk_size,
                                     "chunk_overlap": chunk_overlap,
                                     "rechunk": rechunk
                                 }
                                 result, err = api_request("POST", "/api/documents/reparse-batch", data=payload)
+                                
+                                st.session_state.show_reparse_modal = False
+                                
                                 if err:
-                                    st.error(f"Failed: {err}")
+                                    st.session_state.operation_result = {
+                                        "type": "error",
+                                        "message": f"Failed to queue documents: {err}"
+                                    }
                                 else:
-                                    st.success(f"✅ {result.get('success_count', 0)} document(s) queued for reprocessing")
-                                    st.session_state.selected_docs.clear()
-                                    st.session_state.show_reparse_modal = False
-                                    st.rerun()
+                                    success_count = result.get('success_count', 0)
+                                    failed_count = result.get('failed_count', 0)
+                                    results = result.get('results', [])
+                                    
+                                    # Get queued file names
+                                    queued_files = [r.get('document_name', 'Unknown') for r in results if r.get('status') == 'queued']
+                                    failed_files = [f"{r.get('document_name', 'Unknown')}: {r.get('error', 'Unknown')}" for r in results if r.get('status') == 'failed']
+                                    
+                                    if success_count > 0:
+                                        st.session_state.operation_result = {
+                                            "type": "success",
+                                            "icon": "🔄",
+                                            "message": f"{success_count} document(s) queued for reprocessing!",
+                                            "detail": "Processing will begin automatically...",
+                                            "files": queued_files,
+                                            "file_label": "📄 Queued Files",
+                                            "show_progress": True,
+                                            "progress": 0,
+                                            "progress_text": f"0/{success_count} completed, 0 failed, {success_count} pending..."
+                                        }
+                                    elif failed_count > 0:
+                                        st.session_state.operation_result = {
+                                            "type": "error",
+                                            "message": f"{failed_count} document(s) failed to queue",
+                                            "errors": failed_files
+                                        }
+                                    else:
+                                        st.session_state.operation_result = None
+                                    
+                                st.rerun()
                         
                         with col_cancel:
                             if st.button("❌ Cancel", key="cancel_reparse_btn"):
@@ -598,6 +711,7 @@ elif page == "KB Management":
                             col_save, col_close = st.columns(2)
                             with col_save:
                                 if st.button("💾 Save & Reprocess", key="btn_save_reprocess", type="primary"):
+                                    word_count = len(new_content.split())
                                     payload = {
                                         "content": new_content,
                                         "chunk_size": edit_chunk_size,
@@ -605,13 +719,28 @@ elif page == "KB Management":
                                         "rechunk": edit_rechunk
                                     }
                                     result, err = api_request("PUT", f"/api/documents/{doc_id}/content", data=payload)
+                                    
+                                    st.session_state.show_edit_modal = False
+                                    st.session_state.edit_doc_id = None
+                                    
                                     if err:
-                                        st.error(f"Failed: {err}")
+                                        st.session_state.operation_result = {
+                                            "type": "error",
+                                            "message": f"Failed to update document: {err}"
+                                        }
                                     else:
-                                        st.success(f"✅ Document content updated and queued for reprocessing")
-                                        st.session_state.show_edit_modal = False
-                                        st.session_state.edit_doc_id = None
-                                        st.rerun()
+                                        st.session_state.operation_result = {
+                                            "type": "success",
+                                            "icon": "✏️",
+                                            "message": "Document content updated!",
+                                            "detail": f"Word count: {word_count} | Processing queued...",
+                                            "files": [content_result.get('document_name', 'Unknown')],
+                                            "file_label": "📝 Document",
+                                            "show_progress": True,
+                                            "progress": 0,
+                                            "progress_text": "0/1 completed, 0 failed, 1 pending..."
+                                        }
+                                    st.rerun()
                             
                             with col_close:
                                 if st.button("❌ Cancel", key="cancel_edit_btn"):
@@ -749,7 +878,7 @@ elif page == "KB Management":
             pending = st.session_state.pending_files
             disabled = not (all_files and selected_intent_name != "-- Select an Intent --")
             
-            if st.button("📤 Upload All Documents", type="primary", disabled=disabled):
+            if st.button("📤 Upload All Documents", key="btn_upload_all", type="primary", disabled=disabled):
                 if not all_files:
                     st.error("Please select at least one file")
                 elif selected_intent_name == "-- Select an Intent --":
@@ -796,39 +925,47 @@ elif page == "KB Management":
                             )
 
                         if error:
-                            st.error(f"Upload failed: {error}")
+                            st.session_state.operation_result = {
+                                "type": "error",
+                                "message": f"Upload failed: {error}"
+                            }
                         else:
                             successful = result.get("successful", 0)
                             failed_count = result.get("failed", 0)
                             results = result.get("results", [])
 
+                            # Show success message with file list
                             if successful > 0:
+                                uploaded_files_list = [r.get('name') for r in results if r.get("status") == "uploaded"]
+                                st.session_state.operation_result = {
+                                    "type": "success",
+                                    "icon": "✅",
+                                    "message": f"{successful} document(s) uploaded!",
+                                    "detail": "Processing will begin automatically...",
+                                    "files": uploaded_files_list,
+                                    "file_label": "📤 Uploaded Files",
+                                    "show_progress": True,
+                                    "progress": 0,
+                                    "progress_text": f"0/{successful} completed, 0 failed, {successful} pending..."
+                                }
+                            
+                            if failed_count > 0:
+                                failed_files = [f"{r.get('name')}: {r.get('error', 'Unknown')}" for r in results if r.get("status") == "failed"]
+                                st.session_state.operation_result = {
+                                    "type": "error",
+                                    "message": f"{failed_count} document(s) failed to upload",
+                                    "errors": failed_files
+                                }
+                            
+                            if successful > 0:
+                                # Set upload state
                                 doc_ids = [r.get("id") for r in results if r.get("status") == "uploaded"]
                                 st.session_state.upload_in_progress = True
                                 st.session_state.uploaded_doc_ids = doc_ids
                                 st.session_state.pending_files = []
                                 st.session_state.duplicate_files = []
-                                
-                                st.success(f"✅ {successful} document(s) uploaded! Processing...")
-                                st.rerun()
                             
-                            if failed_count > 0:
-                                st.warning(f"⚠️ {failed_count} document(s) failed:")
-                                for r in results:
-                                    if r.get("status") == "failed":
-                                        st.error(f"  - {r.get('name')}: {r.get('error', 'Unknown error')}")
-
-                            if successful > 0:
-                                st.session_state.upload_in_progress = True
-                                st.session_state.uploaded_doc_ids = doc_ids
-                                st.session_state.pending_files = []
-                                st.session_state.duplicate_files = []
-                                
-                                st.success(f"✅ {successful} document(s) uploaded! Processing...")
-                                st.rerun()
-                        
-                        if failed_count > 0:
-                            st.warning(f"⚠️ {failed_count} document(s) failed:")
+                            st.rerun()
 
         # Show hint if no intent selected
         if uploaded_files and selected_intent_name == "-- Select an Intent --":
@@ -917,7 +1054,7 @@ elif page == "View Document":
                     st.warning(f"Download error: {e}")
             
             with col_update:
-                if st.button("🔄 Update Document", type="primary"):
+                if st.button("🔄 Update Document", key="btn_update_doc", type="primary"):
                     st.session_state.update_doc_id = doc_id
                     st.session_state.view_doc_id = None
                     st.rerun()
@@ -1028,7 +1165,7 @@ elif page == "Update Document":
                 
                 col1, col2 = st.columns([1, 3])
                 with col1:
-                    if st.button("📤 Replace Document", type="primary"):
+                    if st.button("📤 Replace Document", key="btn_replace_doc", type="primary"):
                         with st.spinner("Replacing document..."):
                             # Delete old document
                             delete_result, del_err = api_request("DELETE", f"/api/documents/{doc_id}")
@@ -1399,7 +1536,7 @@ elif page == "Query":
         ["web", "whatsapp", "teams"]
     )
 
-    if st.button("🚀 Submit Query", type="primary"):
+    if st.button("🚀 Submit Query", key="btn_submit_query", type="primary"):
         if not query_text.strip():
             st.error("Please enter a question")
         else:
@@ -1493,7 +1630,7 @@ elif page == "Frontend Integration":
 
         with col2:
             if wa_status.get("configured"):
-                if st.button("🔄 Test WhatsApp", type="primary"):
+                if st.button("🔄 Test WhatsApp", key="btn_test_wa", type="primary"):
                     st.info("WhatsApp test functionality available")
             else:
                 st.info("Configure credentials to enable testing")
@@ -1502,7 +1639,7 @@ elif page == "Frontend Integration":
             wa_phone = st.text_input("Phone Number ID", key="wa_phone")
             wa_token = st.text_input("Access Token", type="password", key="wa_token")
 
-            if st.button("💾 Save WhatsApp Credentials"):
+            if st.button("💾 Save WhatsApp Credentials", key="btn_save_wa"):
                 if wa_phone and wa_token:
                     result, err = api_request(
                         "PUT",
@@ -1544,7 +1681,7 @@ elif page == "Frontend Integration":
                 )
                 st.caption("Format: 19:xxx@thread.tacv2 or UUID")
                 
-                if st.button("🔄 Test Teams", type="primary"):
+                if st.button("🔄 Test Teams", key="btn_test_teams", type="primary"):
                     conv_id = st.session_state.get("teams_conv_id", "").strip()
                     
                     if conv_id:
@@ -1576,7 +1713,7 @@ elif page == "Frontend Integration":
             teams_app_pwd = st.text_input("App Password", type="password", key="teams_app_pwd")
             teams_tenant = st.text_input("Tenant ID", key="teams_tenant")
 
-            if st.button("💾 Save Teams Credentials"):
+            if st.button("💾 Save Teams Credentials", key="btn_save_teams"):
                 if teams_app_id and teams_app_pwd and teams_tenant:
                     result, err = api_request(
                         "PUT",
@@ -1739,7 +1876,7 @@ elif page == "Analytics":
     st.markdown("---")
     st.subheader("Export")
 
-    if st.button("📥 Download Query Logs (CSV)"):
+    if st.button("📥 Download Query Logs (CSV)", key="btn_download_logs"):
         try:
             response = requests.get(f"{API_BASE_URL}/api/analytics/export-logs")
             if response.status_code == 200:

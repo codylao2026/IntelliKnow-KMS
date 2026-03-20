@@ -27,6 +27,8 @@ async def process_document(document_id: int, db: AsyncSession, force_rechunk: bo
     Returns:
         True if successful
     """
+    logger.info(f"Starting to process document {document_id}, force_rechunk={force_rechunk}")
+    
     # Get document from database
     result = await db.execute(
         select(Document).where(Document.id == document_id)
@@ -41,30 +43,36 @@ async def process_document(document_id: int, db: AsyncSession, force_rechunk: bo
         # Update status to processing
         document.status = "processing"
         await db.commit()
+        logger.info(f"Document {document_id} status changed to processing")
 
         # Delete existing vectors if force_rechunk
         if force_rechunk:
             try:
                 vector_store = get_vector_store()
                 vector_store.delete_document(document_id)
+                logger.info(f"Deleted existing vectors for document {document_id}")
             except Exception as e:
                 logger.warning(f"Could not delete from vector store: {e}")
 
-        # Parse document (only if no content or force_rechunk)
-        if not document.content or force_rechunk:
-            logger.info(f"Parsing document: {document.file_path}")
+        # Parse document - always prefer database content if it exists (edited content)
+        if document.content:
+            # Use content from database (could be edited content)
+            logger.info(f"Using database content for document {document_id}, length: {len(document.content)}")
+            content = document.content
+        else:
+            # No content in database, parse from file
+            logger.info(f"Parsing document from file: {document.file_path}")
             content = parse_document(document.file_path)
             document.content = content
-        else:
-            logger.info(f"Using existing content for document {document_id}")
-            content = document.content
+            logger.info(f"Document {document_id} parsed from file, content length: {len(content)}")
 
         # Split into chunks
         chunks = split_text_into_chunks(content)
-        logger.info(f"Split into {len(chunks)} chunks")
+        logger.info(f"Document {document_id} split into {len(chunks)} chunks")
 
         # Add to vector store
         vector_store = get_vector_store()
+        logger.info(f"Adding {len(chunks)} chunks to vector store for document {document_id}")
         vector_ids = vector_store.add_documents(
             texts=chunks,
             document_id=document_id,
@@ -74,6 +82,7 @@ async def process_document(document_id: int, db: AsyncSession, force_rechunk: bo
                 "file_type": document.file_type
             }
         )
+        logger.info(f"Document {document_id} added to vector store, got {len(vector_ids)} vector IDs")
 
         # Update document with vector IDs
         document.vector_ids = vector_ids
@@ -86,6 +95,8 @@ async def process_document(document_id: int, db: AsyncSession, force_rechunk: bo
 
     except Exception as e:
         logger.error(f"Error processing document {document_id}: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         document.status = "failed"
         document.error_message = str(e)
         await db.commit()

@@ -93,11 +93,15 @@ TEAMS_APP_PASSWORD = os.getenv("TEAMS_APP_PASSWORD", "")
 TEAMS_TENANT_ID = os.getenv("TEAMS_TENANT_ID", "")
 TEAMS_BOT_ID = os.getenv("TEAMS_BOT_ID", "")
 
-# ============== Feishu/Lark ==============
+# ============== Feishu/Lark (长连接模式) ==============
+# 使用WebSocket长连接，无需公网域名和Verify Token
 FEISHU_APP_ID = os.getenv("FEISHU_APP_ID", "")
 FEISHU_APP_SECRET = os.getenv("FEISHU_APP_SECRET", "")
-FEISHU_VERIFY_TOKEN = os.getenv("FEISHU_VERIFY_TOKEN", "intelliknow_verify")
 FEISHU_BOT_NAME = os.getenv("FEISHU_BOT_NAME", "IntelliKnow 助手")
+
+# 长连接模式配置
+FEISHU_ENABLE_WS = True  # 启用WebSocket长连接
+FEISHU_LOG_LEVEL = os.getenv("FEISHU_LOG_LEVEL", "INFO")  # DEBUG/INFO/WARNING/ERROR
 
 # ============== Security ==============
 

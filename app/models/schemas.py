@@ -58,6 +58,7 @@ class DocumentResponse(BaseModel):
     intent_id: Optional[int]
     intent_name: Optional[str]
     status: str
+    error_message: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
