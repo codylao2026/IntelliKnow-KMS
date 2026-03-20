@@ -20,21 +20,22 @@ _executor = ThreadPoolExecutor(max_workers=2)
 _processing_tasks: dict = {}
 
 
-async def process_document_async(document_id: int):
+async def process_document_async(document_id: int, force_rechunk: bool = True):
     """
     Process document asynchronously
 
     Args:
         document_id: Document ID to process
+        force_rechunk: Force re-chunking even if document was processed before
     """
     task_id = f"doc_{document_id}"
     _processing_tasks[task_id] = "processing"
 
-    logger.info(f"Starting async processing for document {document_id}")
+    logger.info(f"Starting async processing for document {document_id}, force_rechunk={force_rechunk}")
 
     try:
         async with async_session_maker() as db:
-            success = await process_document(document_id, db)
+            success = await process_document(document_id, db, force_rechunk=force_rechunk)
 
             if success:
                 _processing_tasks[task_id] = "completed"

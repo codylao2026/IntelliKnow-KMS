@@ -93,6 +93,12 @@ TEAMS_APP_PASSWORD = os.getenv("TEAMS_APP_PASSWORD", "")
 TEAMS_TENANT_ID = os.getenv("TEAMS_TENANT_ID", "")
 TEAMS_BOT_ID = os.getenv("TEAMS_BOT_ID", "")
 
+# ============== Feishu/Lark ==============
+FEISHU_APP_ID = os.getenv("FEISHU_APP_ID", "")
+FEISHU_APP_SECRET = os.getenv("FEISHU_APP_SECRET", "")
+FEISHU_VERIFY_TOKEN = os.getenv("FEISHU_VERIFY_TOKEN", "intelliknow_verify")
+FEISHU_BOT_NAME = os.getenv("FEISHU_BOT_NAME", "IntelliKnow 助手")
+
 # ============== Security ==============
 
 # Encryption key for credentials (32 bytes hex)

@@ -62,12 +62,12 @@ def api_request(method, endpoint, files=None, data=None, **kwargs):
     url = f"{API_BASE_URL}{endpoint}"
     try:
         if files and isinstance(files, list):
-            # Handle multiple files upload
-            files_dict = {}
+            # Handle multiple files upload - send as list for FastAPI List[UploadFile]
+            files_list = []
             for name, file_tuple in files:
-                files_dict[name] = (file_tuple[0], file_tuple[1])
+                files_list.append((name, (file_tuple[0], file_tuple[1])))
             
-            response = requests.post(url, files=files_dict, data=data)
+            response = requests.post(url, files=files_list, data=data)
         elif files:
             if method == "POST":
                 response = requests.post(url, files=files, data=data)
@@ -104,59 +104,63 @@ def card_container(color_class: str):
 st.sidebar.markdown("""
 <style>
 .sidebar-title { font-size: 1.4em; font-weight: bold; color: #1E293B; }
-.category-header { font-size: 0.9em; font-weight: bold; color: #64748B; padding: 8px 0 4px 0; }
+.menu-header { font-size: 0.9em; font-weight: bold; color: #1E293B; padding: 6px 0 2px 0; }
 </style>
 """, unsafe_allow_html=True)
 
 st.sidebar.title("🧠 IntelliKnow KMS")
 st.sidebar.markdown("---")
 
-# Use session_state to track current page
+# Define menu options
+admin_options = ["Dashboard", "KB Management", "Intent Configuration", "Frontend Integration", "Analytics"]
+user_options = ["Query"]
+
+# Initialize session state
 if "current_page" not in st.session_state:
     st.session_state.current_page = "Dashboard"
 if "nav_category" not in st.session_state:
     st.session_state.nav_category = "Admin"
 
-# Category selection
-st.sidebar.markdown('<p class="category-header">📂 Select Category</p>', unsafe_allow_html=True)
-nav_category = st.sidebar.radio(
-    "Category",
-    ["Admin", "User"],
-    index=0 if st.session_state.nav_category == "Admin" else 1,
-    key="nav_category_radio",
-    label_visibility="collapsed"
-)
-st.session_state.nav_category = nav_category
-
-# Submenu based on category
-def change_page():
-    st.session_state.current_page = st.session_state.nav_radio
-
-# Clear view/update states when navigating
-def clear_doc_states():
-    st.session_state.view_doc_id = None
-    st.session_state.update_doc_id = None
-
-if nav_category == "Admin":
-    admin_options = ["Dashboard", "KB Management", "Intent Configuration", "Frontend Integration", "Analytics"]
-    st.sidebar.markdown("---")
-    st.sidebar.markdown('<p class="category-header">👨‍💼 Admin Menu</p>', unsafe_allow_html=True)
-    st.sidebar.radio(
-        "Admin Navigation",
-        admin_options,
-        key="nav_radio",
-        on_change=clear_doc_states
-    )
+# Get default selection based on current page
+if st.session_state.current_page in admin_options:
+    default_admin = admin_options.index(st.session_state.current_page)
+    default_user = 0
+    st.session_state.nav_category = "Admin"
+elif st.session_state.current_page in user_options:
+    default_admin = 0
+    default_user = user_options.index(st.session_state.current_page)
+    st.session_state.nav_category = "User"
 else:
-    user_options = ["Query"]
-    st.sidebar.markdown("---")
-    st.sidebar.markdown('<p class="category-header">👤 User Menu</p>', unsafe_allow_html=True)
-    st.sidebar.radio(
-        "User Navigation",
-        user_options,
-        key="nav_radio",
-        on_change=clear_doc_states
+    default_admin = 0
+    default_user = 0
+
+# Admin menu
+st.sidebar.markdown('<p class="menu-header">👨‍💼 Admin Menu</p>', unsafe_allow_html=True)
+st.sidebar.radio(
+    "Admin Navigation",
+    admin_options,
+    key="nav_radio_admin",
+    index=default_admin,
+    on_change=lambda: st.session_state.update(
+        current_page=st.session_state.nav_radio_admin,
+        nav_category="Admin"
     )
+)
+
+st.sidebar.markdown("---")
+
+# User menu
+st.sidebar.markdown('<p class="menu-header">👤 User Menu</p>', unsafe_allow_html=True)
+st.sidebar.radio(
+    "User Navigation",
+    user_options,
+    key="nav_radio_user",
+    index=default_user,
+    on_change=lambda: st.session_state.update(
+        current_page=st.session_state.nav_radio_user,
+        nav_category="User"
+    )
+)
 
 page = st.session_state.current_page
 
@@ -168,11 +172,10 @@ elif st.session_state.get("update_doc_id"):
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("""
-<div style="font-size: 0.85em; color: #64748B;">
-<b>Gen AI-powered Knowledge Management System</b><br>
+<div style="font-size: 0.8em; color: #64748B;">
+<b>IntelliKnow KMS</b><br>
 • RAG-powered query responses<br>
-• Multi-frontend integration<br>
-• Intent-based classification
+• Multi-frontend integration
 </div>
 """, unsafe_allow_html=True)
 
@@ -221,7 +224,7 @@ if page == "Dashboard":
         with col2:
             st.success("✅ Database: Connected")
         with col3:
-            if st.button("🔄 Refresh Stats"):
+            if st.button("🔄 Refresh Stats", key="btn_refresh_stats"):
                 st.rerun()
         with col4:
             st.info("🚀 System Ready")
@@ -242,6 +245,17 @@ elif page == "KB Management":
         # Initialize selection state
         if "selected_docs" not in st.session_state:
             st.session_state.selected_docs = set()
+        if "show_reparse_modal" not in st.session_state:
+            st.session_state.show_reparse_modal = False
+        if "show_edit_modal" not in st.session_state:
+            st.session_state.show_edit_modal = False
+        if "edit_doc_id" not in st.session_state:
+            st.session_state.edit_doc_id = None
+
+        # Fetch document settings for default values
+        doc_settings, _ = api_request("GET", "/api/intents/settings/document")
+        default_chunk_size = doc_settings.get("chunk_size", 256) if doc_settings else 256
+        default_chunk_overlap = doc_settings.get("chunk_overlap", 50) if doc_settings else 50
 
         # Fetch intents for filter
         intents, _ = api_request("GET", "/api/intents")
@@ -393,20 +407,39 @@ elif page == "KB Management":
 
                 st.markdown("---")
 
-                # Batch delete section
+                # Batch actions section
                 selected_count = len(st.session_state.selected_docs)
                 if selected_count > 0:
+                    # Check batch limit
+                    if selected_count > 20:
+                        st.warning(f"⚠️ Maximum 20 documents can be processed at once. {selected_count} selected.")
+                    
                     st.markdown(f"""
-                    <div style="background: #FEF2F2; padding: 12px; border-radius: 8px; border-left: 4px solid #EF4444;">
-                        <span style="color: #DC2626; font-weight: bold;">☑️ {selected_count} document(s) selected</span>
+                    <div style="background: #EFF6FF; padding: 12px; border-radius: 8px; border-left: 4px solid #3B82F6; margin-bottom: 12px;">
+                        <span style="color: #1D4ED8; font-weight: bold;">☑️ {selected_count} document(s) selected</span>
                     </div>
                     """, unsafe_allow_html=True)
 
-                    col_del_info, col_del_btn = st.columns([3, 1])
-                    with col_del_info:
-                        st.write(f"Ready to delete {selected_count} selected document(s)")
-                    with col_del_btn:
-                        if st.button(f"🗑️ Delete Selected ({selected_count})", type="primary"):
+                    # Action buttons
+                    col_reparse, col_edit, col_delete = st.columns(3)
+                    
+                    with col_reparse:
+                        if st.button(f"🔄 Reparse ({min(selected_count, 20)})", key="btn_reparse_docs", help="Re-parse selected documents"):
+                            st.session_state.show_reparse_modal = True
+                            st.rerun()
+                    
+                    with col_edit:
+                        if selected_count == 1:
+                            doc_id = list(st.session_state.selected_docs)[0]
+                            if st.button("📝 Edit Content", key="btn_edit_content", help="Edit document content"):
+                                st.session_state.show_edit_modal = True
+                                st.session_state.edit_doc_id = doc_id
+                                st.rerun()
+                        else:
+                            st.button("📝 Edit Content", disabled=True, key="btn_edit_disabled", help="Select only one document to edit")
+                    
+                    with col_delete:
+                        if st.button(f"🗑️ Delete ({selected_count})", key="btn_delete_docs", type="secondary"):
                             deleted = 0
                             failed = 0
                             for doc_id in list(st.session_state.selected_docs):
@@ -423,7 +456,168 @@ elif page == "KB Management":
                                 st.error(f"❌ {failed} document(s) failed to delete")
                             st.rerun()
                 else:
-                    st.info("☐ Select documents using checkboxes to enable batch deletion")
+                    st.info("☐ Select documents using checkboxes to enable batch actions")
+
+                # Reparse Modal
+                if st.session_state.show_reparse_modal:
+                    with st.container():
+                        st.markdown("""
+                        <div style="background: #FEF3C7; padding: 16px; border-radius: 12px; border: 2px solid #F59E0B; margin-top: 16px;">
+                            <h4 style="color: #D97706; margin: 0 0 12px 0;">🔄 Batch Reparse Documents</h4>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                        st.write(f"Selected: {selected_count} document(s)")
+                        
+                        # Reparse options
+                        reparse_option = st.radio(
+                            "Reparse Option",
+                            ["Only reparse text (keep chunks)", "Re-chunk and re-vectorize"],
+                            index=1,
+                            horizontal=True,
+                            label_visibility="collapsed"
+                        )
+                        rechunk = reparse_option == "Re-chunk and re-vectorize"
+                        
+                        # Chunk settings
+                        st.write("**Chunk Configuration:**")
+                        col_size, col_overlap = st.columns(2)
+                        with col_size:
+                            chunk_size = st.number_input(
+                                "Chunk Size",
+                                min_value=50,
+                                max_value=2000,
+                                value=default_chunk_size,
+                                step=16,
+                                key="reparse_chunk_size"
+                            )
+                        with col_overlap:
+                            chunk_overlap = st.number_input(
+                                "Chunk Overlap",
+                                min_value=0,
+                                max_value=500,
+                                value=default_chunk_overlap,
+                                step=10,
+                                key="reparse_chunk_overlap"
+                            )
+                        
+                        # Action buttons
+                        col_confirm, col_cancel = st.columns(2)
+                        with col_confirm:
+                            if st.button("✅ Start Reparsing", key="btn_start_reparse", type="primary"):
+                                # Call batch reparse API
+                                doc_ids = list(st.session_state.selected_docs)[:20]
+                                payload = {
+                                    "document_ids": doc_ids,
+                                    "chunk_size": chunk_size,
+                                    "chunk_overlap": chunk_overlap,
+                                    "rechunk": rechunk
+                                }
+                                result, err = api_request("POST", "/api/documents/reparse-batch", data=payload)
+                                if err:
+                                    st.error(f"Failed: {err}")
+                                else:
+                                    st.success(f"✅ {result.get('success_count', 0)} document(s) queued for reprocessing")
+                                    st.session_state.selected_docs.clear()
+                                    st.session_state.show_reparse_modal = False
+                                    st.rerun()
+                        
+                        with col_cancel:
+                            if st.button("❌ Cancel", key="cancel_reparse_btn"):
+                                st.session_state.show_reparse_modal = False
+                                st.rerun()
+
+                # Edit Modal
+                if st.session_state.show_edit_modal and st.session_state.edit_doc_id:
+                    doc_id = st.session_state.edit_doc_id
+                    
+                    # Fetch document content
+                    content_result, content_err = api_request("GET", f"/api/documents/{doc_id}/content")
+                    
+                    if content_err:
+                        st.error(f"Failed to load content: {content_err}")
+                    else:
+                        with st.container():
+                            st.markdown("""
+                            <div style="background: #FAF5FF; padding: 16px; border-radius: 12px; border: 2px solid #8B5CF6; margin-top: 16px;">
+                                <h4 style="color: #8B5CF6; margin: 0 0 12px 0;">📝 Edit Document Content</h4>
+                            </div>
+                            """, unsafe_allow_html=True)
+                            
+                            st.write(f"**Document:** {content_result.get('document_name', 'Unknown')}")
+                            st.write(f"**Word Count:** {content_result.get('word_count', 0)}")
+                            
+                            # Edit options
+                            edit_option = st.radio(
+                                "Edit Option",
+                                ["Only reparse text (keep chunks)", "Re-chunk and re-vectorize"],
+                                index=1,
+                                horizontal=True,
+                                label_visibility="collapsed",
+                                key="edit_rechunk_option"
+                            )
+                            edit_rechunk = edit_option == "Re-chunk and re-vectorize"
+                            
+                            # Content editor (using text_area as rich text editor placeholder)
+                            st.write("**Content (editable):**")
+                            new_content = st.text_area(
+                                "Edit document content",
+                                value=content_result.get("content", ""),
+                                height=400,
+                                label_visibility="collapsed",
+                                key="edit_content_area"
+                            )
+                            
+                            # Chunk settings
+                            if edit_rechunk:
+                                st.write("**Chunk Configuration:**")
+                                col_e1, col_e2 = st.columns(2)
+                                with col_e1:
+                                    edit_chunk_size = st.number_input(
+                                        "Chunk Size",
+                                        min_value=50,
+                                        max_value=2000,
+                                        value=default_chunk_size,
+                                        step=16,
+                                        key="edit_chunk_size"
+                                    )
+                                with col_e2:
+                                    edit_chunk_overlap = st.number_input(
+                                        "Chunk Overlap",
+                                        min_value=0,
+                                        max_value=500,
+                                        value=default_chunk_overlap,
+                                        step=10,
+                                        key="edit_chunk_overlap"
+                                    )
+                            else:
+                                edit_chunk_size = default_chunk_size
+                                edit_chunk_overlap = default_chunk_overlap
+                            
+                            # Action buttons
+                            col_save, col_close = st.columns(2)
+                            with col_save:
+                                if st.button("💾 Save & Reprocess", key="btn_save_reprocess", type="primary"):
+                                    payload = {
+                                        "content": new_content,
+                                        "chunk_size": edit_chunk_size,
+                                        "chunk_overlap": edit_chunk_overlap,
+                                        "rechunk": edit_rechunk
+                                    }
+                                    result, err = api_request("PUT", f"/api/documents/{doc_id}/content", data=payload)
+                                    if err:
+                                        st.error(f"Failed: {err}")
+                                    else:
+                                        st.success(f"✅ Document content updated and queued for reprocessing")
+                                        st.session_state.show_edit_modal = False
+                                        st.session_state.edit_doc_id = None
+                                        st.rerun()
+                            
+                            with col_close:
+                                if st.button("❌ Cancel", key="cancel_edit_btn"):
+                                    st.session_state.show_edit_modal = False
+                                    st.session_state.edit_doc_id = None
+                                    st.rerun()
             else:
                 st.info("No documents found. Try adjusting your search or filters.")
 
@@ -445,14 +639,16 @@ elif page == "KB Management":
         if "duplicate_files" not in st.session_state:
             st.session_state.duplicate_files = []
 
-        # Fetch existing documents for duplicate check
+        # Fetch existing documents for duplicate check (only completed ones)
         existing_docs, _ = api_request("GET", "/api/documents?limit=1000")
         existing_names = set()
         existing_doc_map = {}
         if existing_docs and existing_docs.get("items"):
             for d in existing_docs["items"]:
-                existing_names.add(d["name"].lower())
-                existing_doc_map[d["name"].lower()] = d
+                # Only consider completed documents as existing
+                if d.get("status") == "completed":
+                    existing_names.add(d["name"].lower())
+                    existing_doc_map[d["name"].lower()] = d
 
         uploaded_files = st.file_uploader(
             "Choose files (multiple allowed)",
@@ -476,14 +672,36 @@ elif page == "KB Management":
         )
 
         if uploaded_files:
-            # Check for duplicates
+            # Check for duplicates and invalid files
             duplicates = []
             new_files = []
+            invalid_files = []
+            
+            # Get base names (without extension) for better duplicate detection
+            existing_base_names = set()
+            for name in existing_names:
+                base_name = ".".join(name.split(".")[:-1]) if "." in name else name
+                existing_base_names.add(base_name.lower())
+            
             for f in uploaded_files:
-                if f.name.lower() in existing_names:
+                file_ext = f.name.split(".")[-1].lower() if "." in f.name else ""
+                base_name = ".".join(f.name.split(".")[:-1]) if "." in f.name else f.name
+                
+                if file_ext not in ["pdf", "docx"]:
+                    invalid_files.append(f)
+                elif f.name.lower() in existing_names:
                     duplicates.append(f)
+                elif base_name.lower() in existing_base_names:
+                    # Same base name but different extension - treat as new
+                    new_files.append(f)
                 else:
                     new_files.append(f)
+
+            if invalid_files:
+                st.error(f"❌ {len(invalid_files)} file(s) have invalid format:")
+                for inv in invalid_files:
+                    st.write(f"  - **{inv.name}** (not PDF or DOCX)")
+                st.warning("Only PDF and DOCX files are supported")
 
             if duplicates:
                 st.warning(f"⚠️ {len(duplicates)} file(s) already exist:")
@@ -621,7 +839,7 @@ elif page == "KB Management":
 elif page == "View Document":
     doc_id = st.session_state.get("view_doc_id")
     
-    if st.button("← Back to Document List"):
+    if st.button("← Back to Document List", key="btn_back_view"):
         st.session_state.view_doc_id = None
         st.rerun()
     
@@ -754,7 +972,7 @@ elif page == "View Document":
 elif page == "Update Document":
     doc_id = st.session_state.get("update_doc_id")
     
-    if st.button("← Back to Document List"):
+    if st.button("← Back to Document List", key="btn_back_update"):
         st.session_state.update_doc_id = None
         st.rerun()
     
@@ -981,9 +1199,9 @@ elif page == "Intent Configuration":
 
         # Confidence Settings
         st.markdown("""
-        <div style="background: #FEF3C7; padding: 16px; border-radius: 12px; margin-bottom: 16px;">
-            <h3 style="color: #D97706; margin: 0 0 8px 0;">⚙️ Confidence Settings</h3>
-            <p style="color: #92400E; margin: 0;">Configure intent classification thresholds and weights</p>
+        <div style="background: #FAF5FF; padding: 16px; border-radius: 12px; margin-bottom: 16px;">
+            <h3 style="color: #8B5CF6; margin: 0 0 8px 0;">⚙️ Confidence Settings</h3>
+            <p style="color: #64748B; margin: 0;">Configure intent classification thresholds and weights</p>
         </div>
         """, unsafe_allow_html=True)
 
@@ -1059,9 +1277,9 @@ elif page == "Intent Configuration":
 
         # Document Processing Settings
         st.markdown("""
-        <div style="background: #DBEAFE; padding: 16px; border-radius: 12px; margin-bottom: 16px;">
-            <h3 style="color: #2563EB; margin: 0 0 8px 0;">📄 Document Processing Settings</h3>
-            <p style="color: #1E40AF; margin: 0;">Configure text chunking for vectorization</p>
+        <div style="background: #FAF5FF; padding: 16px; border-radius: 12px; margin-bottom: 16px;">
+            <h3 style="color: #8B5CF6; margin: 0 0 8px 0;">📄 Document Processing Settings</h3>
+            <p style="color: #64748B; margin: 0;">Configure text chunking for vectorization</p>
         </div>
         """, unsafe_allow_html=True)
 

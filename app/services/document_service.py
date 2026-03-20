@@ -15,13 +15,14 @@ from config import settings
 logger = logging.getLogger(__name__)
 
 
-async def process_document(document_id: int, db: AsyncSession) -> bool:
+async def process_document(document_id: int, db: AsyncSession, force_rechunk: bool = True) -> bool:
     """
     Process a document: parse, chunk, vectorize
 
     Args:
         document_id: Database document ID
         db: Database session
+        force_rechunk: Force re-chunking even if already processed
 
     Returns:
         True if successful
@@ -41,12 +42,22 @@ async def process_document(document_id: int, db: AsyncSession) -> bool:
         document.status = "processing"
         await db.commit()
 
-        # Parse document
-        logger.info(f"Parsing document: {document.file_path}")
-        content = parse_document(document.file_path)
+        # Delete existing vectors if force_rechunk
+        if force_rechunk:
+            try:
+                vector_store = get_vector_store()
+                vector_store.delete_document(document_id)
+            except Exception as e:
+                logger.warning(f"Could not delete from vector store: {e}")
 
-        # Save extracted content
-        document.content = content
+        # Parse document (only if no content or force_rechunk)
+        if not document.content or force_rechunk:
+            logger.info(f"Parsing document: {document.file_path}")
+            content = parse_document(document.file_path)
+            document.content = content
+        else:
+            logger.info(f"Using existing content for document {document_id}")
+            content = document.content
 
         # Split into chunks
         chunks = split_text_into_chunks(content)
@@ -67,6 +78,7 @@ async def process_document(document_id: int, db: AsyncSession) -> bool:
         # Update document with vector IDs
         document.vector_ids = vector_ids
         document.status = "completed"
+        document.error_message = None
         await db.commit()
 
         logger.info(f"Document {document_id} processed successfully")

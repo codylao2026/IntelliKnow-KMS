@@ -58,7 +58,8 @@ def start_frontend():
     subprocess.run([
         sys.executable, "-m", "streamlit",
         "run", "frontend/app.py",
-        "--server.port", "8501"
+        "--server.port", "8501",
+        "--server.address", "localhost"
     ])
 
 def main():

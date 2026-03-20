@@ -74,6 +74,32 @@ Many enterprises struggle with fragmented information, inefficient knowledge ret
 **FR-008**: 响应格式应适配Teams的原生格式（支持卡片、按钮等富文本）
 **FR-008**: Response format shall adapt to Teams native format (supporting cards, buttons, etc.)
 
+#### 2.1.3 飞书（Lark）Bot集成 / Feishu Bot Integration
+
+**FR-FL-001**: 系统应支持通过飞书自建应用接收用户消息并返回响应
+**FR-FL-001**: The system shall support receiving user messages and returning responses via Feishu self-built application
+
+**FR-FL-002**: 应支持配置飞书应用凭证（App ID, App Secret）
+**FR-FL-002**: The system shall support configuring Feishu application credentials (App ID, App Secret)
+
+**FR-FL-003**: 应显示连接状态（已连接/未连接）并提供测试功能
+**FR-FL-003**: The system shall display connection status (Connected/Disconnected) and provide test functionality
+
+**FR-FL-004**: 响应格式应适配飞书原生格式（支持卡片消息interactive card、按钮等富文本）
+**FR-FL-004**: Response format shall adapt to Feishu native format (supporting interactive cards, buttons, rich text)
+
+**FR-FL-005**: 应支持飞书群聊场景（群聊机器人@机器人触发）
+**FR-FL-005**: The system shall support Feishu group chat scenarios (group bot triggered by @mention)
+
+**FR-FL-006**: 应支持飞书私聊场景（用户直接对话机器人）
+**FR-FL-006**: The system shall support Feishu private chat scenarios (user directly messaging the bot)
+
+**FR-FL-007**: 应支持验证飞书回调事件（Verify Token）
+**FR-FL-007**: The system shall support verifying Feishu callback events (Verify Token)
+
+**FR-FL-008**: 应能解析飞书消息事件，包含文本消息、@消息、图片等
+**FR-FL-008**: The system shall be able to parse Feishu message events, including text, @messages, images, etc.
+
 ### 2.2 文档驱动知识库模块 / Document-Driven Knowledge Base Module
 
 #### 2.2.1 文档上传 / Document Upload
@@ -185,8 +211,8 @@ Many enterprises struggle with fragmented information, inefficient knowledge ret
 **FR-032**: 当无匹配知识时，应返回清晰的"无相关答案"提示
 **FR-032**: When no matching knowledge is found, the system shall return a clear "No relevant answer" message
 
-**FR-033**: 回答格式应适配不同前端工具（WhatsApp/Teams的原生格式）
-**FR-033**: Response format shall adapt to different frontend tools (native format for WhatsApp/Teams)
+**FR-033**: 回答格式应适配不同前端工具（WhatsApp/Teams/飞书的原生格式）
+**FR-033**: Response format shall adapt to different frontend tools (native format for WhatsApp/Teams/Feishu)
 
 ### 2.5 管理后台模块 / Admin Dashboard Module
 

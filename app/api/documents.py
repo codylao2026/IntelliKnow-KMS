@@ -402,9 +402,12 @@ async def delete_document(
 @router.post("/{document_id}/reparse")
 async def reparse_document(
     document_id: int,
+    chunk_size: Optional[int] = Form(None),
+    chunk_overlap: Optional[int] = Form(None),
+    rechunk: bool = Form(True),
     db: AsyncSession = Depends(get_db)
 ):
-    """Reparse a document"""
+    """Reparse a document with optional new chunk settings"""
     result = await db.execute(
         select(Document).where(Document.id == document_id)
     )
@@ -413,9 +416,170 @@ async def reparse_document(
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
 
+    # Update chunk settings if provided
+    if chunk_size is not None:
+        settings.CHUNK_SIZE = chunk_size
+    if chunk_overlap is not None:
+        settings.CHUNK_OVERLAP = chunk_overlap
+
     # Reset status to pending for reprocessing
     document.status = "pending"
     document.vector_ids = []
     await db.commit()
 
-    return {"message": "Document marked for reprocessing"}
+    # Trigger reprocessing
+    from app.services.tasks import process_document_async
+    import asyncio
+    asyncio.create_task(process_document_async(document.id, force_rechunk=rechunk))
+
+    return {
+        "message": "Document marked for reprocessing",
+        "document_id": document_id,
+        "chunk_size": settings.CHUNK_SIZE,
+        "chunk_overlap": settings.CHUNK_OVERLAP,
+        "rechunk": rechunk
+    }
+
+
+class ReparseRequest(BaseModel):
+    document_ids: List[int]
+    chunk_size: Optional[int] = None
+    chunk_overlap: Optional[int] = None
+    rechunk: bool = True
+
+
+@router.post("/reparse-batch")
+async def reparse_documents_batch(
+    request: ReparseRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """Batch reparse documents with optional new chunk settings"""
+    # Check batch limit
+    if len(request.document_ids) > 20:
+        raise HTTPException(status_code=400, detail="Batch limit is 20 documents")
+
+    results = []
+    success_count = 0
+    failed_count = 0
+
+    # Update chunk settings if provided
+    if request.chunk_size is not None:
+        settings.CHUNK_SIZE = request.chunk_size
+    if request.chunk_overlap is not None:
+        settings.CHUNK_OVERLAP = request.chunk_overlap
+
+    for doc_id in request.document_ids:
+        try:
+            result = await db.execute(
+                select(Document).where(Document.id == doc_id)
+            )
+            document = result.scalar_one_or_none()
+
+            if not document:
+                results.append({
+                    "document_id": doc_id,
+                    "status": "failed",
+                    "error": "Document not found"
+                })
+                failed_count += 1
+                continue
+
+            # Reset status for reprocessing
+            document.status = "pending"
+            document.vector_ids = []
+            await db.commit()
+
+            # Trigger reprocessing
+            from app.services.tasks import process_document_async
+            import asyncio
+            asyncio.create_task(process_document_async(document.id, force_rechunk=request.rechunk))
+
+            results.append({
+                "document_id": doc_id,
+                "document_name": document.name,
+                "status": "queued"
+            })
+            success_count += 1
+
+        except Exception as e:
+            results.append({
+                "document_id": doc_id,
+                "status": "failed",
+                "error": str(e)
+            })
+            failed_count += 1
+
+    return {
+        "total": len(request.document_ids),
+        "success_count": success_count,
+        "failed_count": failed_count,
+        "results": results
+    }
+
+
+class UpdateContentRequest(BaseModel):
+    content: str
+    chunk_size: Optional[int] = None
+    chunk_overlap: Optional[int] = None
+    rechunk: bool = True
+
+
+@router.put("/{document_id}/content")
+async def update_document_content(
+    document_id: int,
+    request: UpdateContentRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """Update document content and reprocess"""
+    result = await db.execute(
+        select(Document).where(Document.id == document_id)
+    )
+    document = result.scalar_one_or_none()
+
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    # Update chunk settings if provided
+    if request.chunk_size is not None:
+        settings.CHUNK_SIZE = request.chunk_size
+    if request.chunk_overlap is not None:
+        settings.CHUNK_OVERLAP = request.chunk_overlap
+
+    # Update document content
+    document.content = request.content
+    document.status = "pending"
+    document.vector_ids = []
+    await db.commit()
+
+    # Trigger reprocessing
+    from app.services.tasks import process_document_async
+    import asyncio
+    asyncio.create_task(process_document_async(document.id, force_rechunk=request.rechunk))
+
+    return {
+        "message": "Document content updated and queued for reprocessing",
+        "document_id": document_id,
+        "word_count": len(request.content.split())
+    }
+
+
+@router.get("/{document_id}/status")
+async def get_document_status(
+    document_id: int,
+    db: AsyncSession = Depends(get_db)
+):
+    """Get document processing status"""
+    result = await db.execute(
+        select(Document).where(Document.id == document_id)
+    )
+    document = result.scalar_one_or_none()
+
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    return {
+        "document_id": document_id,
+        "document_name": document.name,
+        "status": document.status,
+        "error_message": document.error_message
+    }
