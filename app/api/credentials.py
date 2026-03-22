@@ -88,7 +88,7 @@ async def update_credential(
 ):
     """Update frontend credentials"""
     # Validate frontend type
-    if frontend_type not in ["whatsapp", "teams"]:
+    if frontend_type not in ["whatsapp", "teams", "feishu"]:
         raise HTTPException(status_code=400, detail="Invalid frontend type")
 
     cipher = get_cipher()
@@ -174,5 +174,14 @@ async def test_credential(
             return {"success": False, "error": "Teams not configured in settings"}
 
         return {"success": True, "message": "Teams connection configured"}
+
+    elif frontend_type == "feishu":
+        from app.services.frontend.feishu import get_feishu_client
+        client = get_feishu_client()
+
+        if not client.app_id or not client.app_secret:
+            return {"success": False, "error": "Feishu not configured in settings"}
+
+        return {"success": True, "message": "Feishu connection configured"}
 
     return {"success": False, "error": "Unknown frontend type"}

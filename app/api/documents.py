@@ -455,7 +455,7 @@ async def reparse_documents_batch(
     request: ReparseRequest,
     db: AsyncSession = Depends(get_db)
 ):
-    """Batch reparse documents with optional new chunk settings"""
+    """Batch reparse documents with optional new chunk settings (sequential processing)"""
     # Check batch limit
     if len(request.document_ids) > 20:
         raise HTTPException(status_code=400, detail="Batch limit is 20 documents")
@@ -491,17 +491,25 @@ async def reparse_documents_batch(
             document.vector_ids = []
             await db.commit()
 
-            # Trigger reprocessing
-            from app.services.tasks import process_document_async
-            import asyncio
-            asyncio.create_task(process_document_async(document.id, force_rechunk=request.rechunk))
-
-            results.append({
-                "document_id": doc_id,
-                "document_name": document.name,
-                "status": "queued"
-            })
-            success_count += 1
+            # Process document SYNCHRONOUSLY (not in parallel) to avoid race conditions
+            from app.services.document_service import process_document
+            success = await process_document(document.id, db, force_rechunk=request.rechunk)
+            
+            if success:
+                results.append({
+                    "document_id": doc_id,
+                    "document_name": document.name,
+                    "status": "completed"
+                })
+                success_count += 1
+            else:
+                results.append({
+                    "document_id": doc_id,
+                    "document_name": document.name,
+                    "status": "failed",
+                    "error": "Processing failed"
+                })
+                failed_count += 1
 
         except Exception as e:
             results.append({

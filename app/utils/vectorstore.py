@@ -193,7 +193,7 @@ class VectorStore:
         top_k: int = 5
     ) -> List[Dict[str, Any]]:
         """
-        Hybrid search using FAISS and BM25 with weighted RRF fusion
+        Hybrid search using FAISS and BM25 with RRF (Reciprocal Rank Fusion)
 
         Args:
             query: Query text
@@ -210,60 +210,98 @@ class VectorStore:
         if self.faiss_store is None or self.bm25 is None:
             logger.warning("No vector store available")
             return []
+            
+        logger.info(f"Searching with query='{query}', intent_id={intent_id}, top_k={top_k}")
+        logger.info(f"Total documents in vector store: {len(self.documents)}")
 
-        # Get weights from settings
-        weights = settings.HYBRID_SEARCH_WEIGHTS
-        vector_weight = weights.get("vector", 0.6)
-        bm25_weight = weights.get("bm25", 0.4)
+        # RRF parameter (default 60)
+        rrf_k = settings.RRF_K
 
-        # FAISS search
+        # FAISS search - get more results for fusion
         faiss_results = self.faiss_store.similarity_search_with_score(
             query,
-            k=top_k * 2
+            k=top_k * 3
         )
+        logger.info(f"FAISS returned {len(faiss_results)} results")
 
         # BM25 search
         tokenized_query = query.split()
         bm25_scores = self.bm25.get_scores(tokenized_query)
-        bm25_top_indices = np.argsort(bm25_scores)[::-1][:top_k * 2]
+        bm25_top_indices = np.argsort(bm25_scores)[::-1][:top_k * 3]
+        logger.info(f"BM25 returned {len(bm25_top_indices)} results with non-zero scores")
 
-        # Normalize scores
-        faiss_max = max(score for _, score in faiss_results) if faiss_results else 1
-        bm25_max = max(bm25_scores) if len(bm25_scores) > 0 else 1
+        # Build a content-to-index map to avoid object identity issues
+        content_to_idx = {}
+        for idx, doc in enumerate(self.documents):
+            content_to_idx[doc.page_content] = idx
 
-        # Weighted fusion
-        fusion_scores = {}
+        # DEBUG: Show what FAISS returned vs what we have
+        if faiss_results:
+            faiss_doc_ids = [d.metadata.get("document_id") for d, _ in faiss_results[:3]]
+            self_doc_ids = [self.documents[i].metadata.get("document_id") for i in content_to_idx.values()]
+            logger.info(f"DEBUG FAISS result doc_ids: {faiss_doc_ids}")
+            logger.info(f"DEBUG self.documents doc_ids (first 10): {self_doc_ids[:10]}")
 
-        # Add normalized FAISS scores with weight
-        for rank, (doc, score) in enumerate(faiss_results):
-            doc_idx = self.documents.index(doc)
-            # Normalize distance to similarity (lower distance = higher similarity)
-            normalized_score = 1 - (score / faiss_max) if faiss_max > 0 else 0
-            fusion_scores[doc_idx] = fusion_scores.get(doc_idx, 0) + normalized_score * vector_weight
-
-        # Add normalized BM25 scores with weight
-        for rank, idx in enumerate(bm25_top_indices):
-            normalized_score = bm25_scores[idx] / bm25_max if bm25_max > 0 else 0
-            fusion_scores[idx] = fusion_scores.get(idx, 0) + normalized_score * bm25_weight
-
-        # Sort by fusion score
-        sorted_results = sorted(fusion_scores.items(), key=lambda x: x[1], reverse=True)
-
-        # Get top results
+        # Get top results (filter out deleted documents)
         results = []
-        for doc_idx, score in sorted_results[:top_k]:
+
+        # RRF fusion: score = Σ 1/(k + rank) for each retriever
+        rrf_scores = {}
+
+        # Add FAISS RRF scores
+        for rank, (doc, score) in enumerate(faiss_results):
+            doc_idx = content_to_idx.get(doc.page_content)
+            if doc_idx is None:
+                logger.warning(f"DEBUG: FAISS doc not found in self.documents by content! FAISS doc_id={doc.metadata.get('document_id')}")
+                # Skip mismatched documents - this indicates index corruption
+                continue
+            rrf_scores[doc_idx] = rrf_scores.get(doc_idx, 0) + 1.0 / (rrf_k + rank)
+
+        # Add BM25 RRF scores
+        for rank, idx in enumerate(bm25_top_indices):
+            if idx < len(self.documents):
+                rrf_scores[idx] = rrf_scores.get(idx, 0) + 1.0 / (rrf_k + rank)
+
+        # Sort by RRF score
+        sorted_results = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
+        logger.info(f"RRF fusion returned {len(sorted_results)} results")
+        for doc_idx, score in sorted_results[:top_k * 3]:
+            if len(results) >= top_k:
+                break
+            
+            if doc_idx >= len(self.documents):
+                continue
+                
             doc = self.documents[doc_idx]
+            
+            # Skip deleted documents
+            if doc.metadata.get("deleted", False):
+                logger.debug(f"Skipping deleted document {doc_idx}")
+                continue
+            
+            # Skip documents without content
+            if not doc.page_content or not doc.page_content.strip():
+                logger.debug(f"Skipping empty document {doc_idx}")
+                continue
+            
+            # Store intent_id for later filtering in response_service
+            doc_intent_id = doc.metadata.get("intent_id")
+            
+            # Normalize RRF score to 0-1 range for display
+            max_rrf = max(rrf_scores.values()) if rrf_scores else 1.0
+            normalized_score = score / max_rrf if max_rrf > 0 else 0
+            
             results.append({
                 "document_id": doc.metadata.get("document_id"),
-                "intent_id": doc.metadata.get("intent_id"),
+                "intent_id": doc_intent_id,
                 "content": doc.page_content,
-                "score": score,
+                "score": normalized_score,
+                "rrf_score": score,
                 "metadata": doc.metadata
             })
+            logger.debug(f"Added document {doc_idx} with RRF score {score}, normalized {normalized_score:.3f}")
 
-        logger.info(f"Hybrid search for '{query}': {len(results)} results, "
-                   f"weights: vector={vector_weight}, bm25={bm25_weight}")
-
+        logger.info(f"Final search returned {len(results)} results for query '{query}'")
         return results
 
     def delete_document(self, document_id: int) -> bool:

@@ -38,15 +38,13 @@ async def search_documents(
             top_k=top_k
         )
 
-        # Filter by intent_id if specified
-        if intent_id is not None:
-            results = [r for r in results if r.get("intent_id") == intent_id]
-
-        logger.info(f"Search for '{query}' returned {len(results)} results")
+        logger.info(f"Search for '{query}' (intent_id={intent_id}) returned {len(results)} results")
         return results
 
     except Exception as e:
         logger.error(f"Search error: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return []
 
 

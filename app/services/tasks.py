@@ -28,13 +28,40 @@ async def process_document_async(document_id: int, force_rechunk: bool = True):
         document_id: Document ID to process
         force_rechunk: Force re-chunking even if document was processed before
     """
+    import os
     task_id = f"doc_{document_id}"
     _processing_tasks[task_id] = "processing"
 
     logger.info(f"Starting async processing for document {document_id}, force_rechunk={force_rechunk}")
 
     try:
+        # Wait a bit to ensure file is fully written
+        await asyncio.sleep(0.5)
+
+        # Verify file exists before processing
         async with async_session_maker() as db:
+            from sqlalchemy import select
+            from app.models.database import Document
+            result = await db.execute(
+                select(Document).where(Document.id == document_id)
+            )
+            doc = result.scalar_one_or_none()
+            
+            if doc and doc.file_path:
+                if not os.path.exists(doc.file_path):
+                    logger.error(f"File does not exist: {doc.file_path}")
+                    _processing_tasks[task_id] = "failed"
+                    return
+                    
+                # Check file size is reasonable
+                file_size = os.path.getsize(doc.file_path)
+                if file_size == 0:
+                    logger.error(f"File is empty: {doc.file_path}")
+                    _processing_tasks[task_id] = "failed"
+                    return
+                    
+                logger.info(f"Processing file: {doc.file_path}, size: {file_size} bytes")
+
             success = await process_document(document_id, db, force_rechunk=force_rechunk)
 
             if success:
@@ -47,6 +74,8 @@ async def process_document_async(document_id: int, force_rechunk: bool = True):
     except Exception as e:
         _processing_tasks[task_id] = "failed"
         logger.error(f"Error in async document processing: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
 
     finally:
         # Clean up after a delay

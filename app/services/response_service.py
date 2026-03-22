@@ -4,6 +4,7 @@ Response generation service - RAG pipeline
 import json
 import logging
 import time
+import asyncio
 from typing import List, Dict, Any, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,6 +17,11 @@ from config import settings
 QUERY_REWRITE_WORD_THRESHOLD = 5
 
 logger = logging.getLogger(__name__)
+
+# Performance optimizations
+ENABLE_PARALLEL_SEARCH = True  # Run intent + search in parallel
+RERANK_CONFIDENCE_THRESHOLD = 0.7  # Skip reranking if confidence > this value
+REDUCED_TOP_K = 4  # Reduced from 6
 
 # Few-shot examples for response generation
 FEW_SHOT_EXAMPLES = """Example 1 (HR):
@@ -47,17 +53,14 @@ User Question: When should I sign my employment contract?
 Answer: All employees must sign a labor contract within one month of joining the company. The contract specifies job duties, working hours, compensation, and termination conditions. Sources: [doc1]"""
 
 # System prompt for response generation
-SYSTEM_PROMPT = f"""You are an enterprise knowledge management assistant. Your tasks are:
-1. Answer user questions based on the provided knowledge base content
-2. Be concise, accurate, and factual
-3. If the knowledge base does not have relevant information, clearly inform the user
-4. Always cite source documents
-5. Answer in the same language as the user's question
+SYSTEM_PROMPT = f"""You are an enterprise knowledge management assistant. Your task is to answer user questions based ONLY on the provided knowledge base documents.
 
-Answer format requirements:
-- Provide the answer first
-- Then list reference sources [doc1], [doc2], etc.
-- Do not fabricate information
+CRITICAL RULES:
+1. You MUST base your answer ONLY on the knowledge base content provided below
+2. NEVER use your general knowledge or make up information
+3. If the knowledge base doesn't contain relevant information, explicitly state: "I could not find relevant information in the knowledge base."
+4. DO NOT include any citation markers like [doc1], [doc2], or "Sources:" in your answer
+5. Answer in the same language as the user's question
 
 {FEW_SHOT_EXAMPLES}"""
 
@@ -73,27 +76,124 @@ def build_rag_prompt(query: str, contexts: List[Dict[str, Any]]) -> str:
     Returns:
         Formatted prompt
     """
-    context_text = "\n\n".join([
-        f"【Document {i+1}】{ctx.get('content', '')}"
-        for i, ctx in enumerate(contexts)
-    ])
+    if not contexts:
+        return f"""User Question: {query}
 
-    prompt = f"""Based on the following knowledge base content, answer the user's question.
+I could not find relevant information in the knowledge base to answer this question. Please try rephrasing or contact the administrator."""
 
-Knowledge Base Content:
+    context_parts = []
+    for i, ctx in enumerate(contexts):
+        doc_num = i + 1
+        doc_name = ctx.get("metadata", {}).get("document_name", f"Document {doc_num}")
+        content = ctx.get("content", "")
+        context_parts.append(f"【Document {doc_num}: {doc_name}】\n{content}")
+    
+    context_text = "\n\n".join(context_parts)
+
+    prompt = f"""KNOWLEDGE BASE DOCUMENTS:
 {context_text}
 
-User Question: {query}
+USER QUESTION: {query}
 
-Please answer based on the above knowledge base content. If the knowledge base does not have relevant information, simply state "No relevant information found in the knowledge base"."""
+ANSWERING REQUIREMENTS:
+- Answer based ONLY on the knowledge base content above
+- Do NOT use your general knowledge or make assumptions
+- Extract specific information from the documents provided
+- If the documents don't contain relevant information, clearly state: "I could not find relevant information in the knowledge base."
+- Do NOT include citation markers like [doc1], [doc2], "Sources:", or any document names in your answer
+- The system will automatically display source references below your response
+
+Provide your answer:"""
 
     return prompt
+
+
+def validate_and_fix_citations(response: str, contexts: List[Dict[str, Any]], query: str = "") -> tuple:
+    """
+    Remove any citation markers from the response and handle "not found" cases
+    
+    Args:
+        response: The generated response text
+        contexts: The sources (for returning)
+        query: The original query (for regenerating if needed)
+        
+    Returns:
+        Tuple of (cleaned_response, contexts)
+    """
+    import re
+    
+    # Get list of document names from contexts
+    doc_names_to_remove = []
+    if contexts:
+        for ctx in contexts:
+            doc_name = ctx.get("metadata", {}).get("document_name", "")
+            if doc_name:
+                doc_names_to_remove.append(re.escape(doc_name))
+    
+    # Check if LLM says it couldn't find info but we have contexts
+    not_found_patterns = [
+        r'could not find',
+        r'no[t ]*relevant',
+        r'do not have.*information',
+        r'could[n\']*t find.*information',
+    ]
+    
+    llm_says_not_found = any(re.search(p, response, re.IGNORECASE) for p in not_found_patterns)
+    
+    # If LLM says not found but we have contexts, REPLACE the response entirely
+    if llm_says_not_found and contexts:
+        context_summaries = []
+        for i, ctx in enumerate(contexts[:3]):  # Use top 3 contexts
+            content = ctx.get("content", "")
+            doc_name = ctx.get("metadata", {}).get("document_name", f"Document {i+1}")
+            if content:
+                # Clean the content
+                cleaned_content = content.strip()
+                context_summaries.append(f"【{doc_name}】\n{cleaned_content}")
+        
+        if context_summaries:
+            # Replace the "not found" response with actual knowledge base content
+            response = f"""Based on the knowledge base documents, here is the relevant information:
+
+{"="*60}
+
+{"="*60}\n\n""".join(context_summaries)
+            logger.warning(f"LLM said not found but had {len(contexts)} contexts - REPLACED response with KB content")
+    
+    # Remove citation patterns
+    patterns_to_remove = [
+        r'Sources?:\s*\[?[^\]]*\]?',
+        r'References?:\s*\[?[^\]]*\]?',
+        r'\[(?:doc|DOC)[0-9]+\]',
+        r'\[(?:FIN|HR|LEG)[A-Z0-9\-_]+\]',
+        r'\[\s*[A-Z]{2,3}-[A-Z]+-[0-9]+\s*[^\]]*\]',
+        r'\[\s*[A-Z]{2,3}-[A-Z]+-[0-9]+\s*\.(?:pdf|docx)\]',
+        r'【[^】]*】',
+        r'§[^§\n]*§',
+    ]
+    
+    for doc_name_pattern in doc_names_to_remove:
+        if doc_name_pattern:
+            patterns_to_remove.append(r'\[\s*' + doc_name_pattern + r'\s*\]')
+    
+    for pattern in patterns_to_remove:
+        response = re.sub(pattern, '', response, flags=re.IGNORECASE)
+    
+    response = re.sub(r'\s*,\s*\[?\s*\]?\s*$', '', response)
+    response = re.sub(r'\s*\.\s*\[?\s*\]?\s*$', '', response)
+    response = re.sub(r'\s*\[\s*\]\s*$', '', response)
+    response = re.sub(r'\s+', ' ', response)
+    response = re.sub(r'\n{3,}', '\n\n', response)
+    response = response.strip()
+    
+    return response, contexts
 
 
 async def generate_response_from_rag(
     query: str,
     contexts: List[Dict[str, Any]],
-    stream: bool = False
+    stream: bool = False,
+    max_response_tokens: int = 500  # Limit response length for speed
 ):
     """
     Generate response using RAG
@@ -102,6 +202,7 @@ async def generate_response_from_rag(
         query: User query
         contexts: Retrieved contexts
         stream: Enable streaming
+        max_response_tokens: Maximum tokens in response (lower = faster)
 
     Returns:
         Generated response (str) or async generator if streaming
@@ -212,7 +313,7 @@ async def process_query(
     intent_hint: Optional[str] = None
 ) -> Dict[str, Any]:
     """
-    Full RAG pipeline for query processing
+    Full RAG pipeline for query processing (optimized for speed)
 
     Args:
         query: User query
@@ -226,7 +327,7 @@ async def process_query(
     start_time = time.time()
 
     try:
-        # Step 1: Intent classification
+        # Step 1: Intent classification (fast - cached intents)
         intent_result = await classify_intent(
             query=query,
             db=db,
@@ -240,34 +341,64 @@ async def process_query(
 
         logger.info(f"Query classified as '{intent_name}' with confidence {confidence} [{confidence_source}]")
 
-        # Step 2: Query rewrite (LLM-based)
-        # Only rewrite short queries (< 5 words) with conversation history
-        if len(query.split()) < QUERY_REWRITE_WORD_THRESHOLD:
-            # Get conversation history from recent queries
-            conversation_history = await _get_conversation_history(db, frontend)
-            rewritten_query = await rewrite_query(query, conversation_history)
-            if rewritten_query != query:
-                logger.info(f"Query rewritten: '{query}' -> '{rewritten_query}'")
-        else:
-            rewritten_query = query
+        # Step 2: Get all document IDs for this intent from database
+        valid_doc_ids = []
+        if intent_id is not None:
+            try:
+                from sqlalchemy import select
+                from app.models.database import Document
+                result = await db.execute(
+                    select(Document.id).where(Document.intent_id == intent_id)
+                )
+                valid_doc_ids = [row[0] for row in result.fetchall()]
+                logger.info(f"Intent '{intent_name}' has {len(valid_doc_ids)} documents: {valid_doc_ids}")
+            except Exception as e:
+                logger.error(f"Failed to get documents for intent {intent_id}: {e}")
 
-        # Step 3: Hybrid search
+        # Step 3: Hybrid search (no intent filter in vectorstore)
         search_results = await search_documents(
-            query=rewritten_query,
-            intent_id=intent_id,
-            top_k=settings.TOP_K_DOCUMENTS
+            query=query,
+            intent_id=None,  # Don't filter in vectorstore
+            top_k=REDUCED_TOP_K
         )
 
         logger.info(f"Found {len(search_results)} search results")
+        
+        # Step 4: Filter by document_id (only return chunks from valid intent documents)
+        if valid_doc_ids:
+            original_count = len(search_results)
+            # Debug: log all search results' document_ids
+            all_doc_ids = [r.get("document_id") for r in search_results]
+            logger.info(f"Search results document_ids: {all_doc_ids}")
+            logger.info(f"Valid doc_ids for intent {intent_id}: {valid_doc_ids}")
+            
+            search_results = [r for r in search_results if r.get("document_id") in valid_doc_ids]
+            logger.info(f"Filtered from {original_count} to {len(search_results)} results for intent {intent_id}")
+            
+            # If filtered to 0, show why
+            if len(search_results) == 0 and original_count > 0:
+                for r in search_results[:3]:
+                    logger.warning(f"Result doc_id={r.get('document_id')} not in valid_doc_ids {valid_doc_ids}")
 
-        # Step 4: Rerank
-        reranked_results = await rerank_results(
-            query=rewritten_query,
-            results=search_results,
-            top_k=settings.RERANK_TOP_K
-        )
+        # Log search result details for debugging
+        for i, result in enumerate(search_results[:3]):
+            logger.info(f"Final result {i+1}: doc_id={result.get('document_id')}, score={result.get('score', 0):.3f}")
 
-        # Step 5: Get dynamic confidence threshold and check
+        # Step 5: Rerank if we have results
+        if len(search_results) <= 2:
+            reranked_results = search_results[:settings.RERANK_TOP_K]
+        elif confidence > RERANK_CONFIDENCE_THRESHOLD:
+            logger.info(f"Skipping reranking (confidence {confidence:.2f} > {RERANK_CONFIDENCE_THRESHOLD})")
+            reranked_results = search_results[:settings.RERANK_TOP_K]
+        else:
+            logger.info(f"Running reranking (confidence {confidence:.2f} <= {RERANK_CONFIDENCE_THRESHOLD})")
+            reranked_results = await rerank_results(
+                query=query,
+                results=search_results,
+                top_k=settings.RERANK_TOP_K
+            )
+
+        # Step 6: Get dynamic confidence threshold and check
         conf_settings = await get_confidence_settings(db)
         threshold = conf_settings["confidence_threshold"]
 
@@ -278,14 +409,20 @@ async def process_query(
             status = "low_confidence"
             response_time = (time.time() - start_time) * 1000
         else:
-            # Step 6: Generate response
+            # Step 5: Generate response (always returns string since stream=False)
             response_text = await generate_response_from_rag(
                 query=query,
-                contexts=reranked_results
+                contexts=reranked_results,
+                stream=False
             )
+            if response_text is None:
+                response_text = ""
 
-            # Step 7: Format sources
-            sources = format_sources(reranked_results)
+            # Step 6: Validate and fix citations to match actual sources
+            response_text, corrected_sources = validate_and_fix_citations(str(response_text), reranked_results, query)
+
+            # Step 7: Format sources (use corrected sources if citations were fixed)
+            sources = format_sources(corrected_sources if corrected_sources else reranked_results)
             response_time = (time.time() - start_time) * 1000
 
             # Determine status
@@ -357,7 +494,7 @@ async def process_query_streaming(
     intent_hint: Optional[str] = None
 ):
     """
-    Streaming version of query processing for better UX.
+    Streaming version of query processing for better UX (optimized for speed).
     Yields SSE events.
 
     Args:
@@ -388,37 +525,62 @@ async def process_query_streaming(
 
         yield f"data: {json.dumps({'event': 'intent', 'data': {'intent': intent_name, 'confidence': confidence, 'source': confidence_source}})}\n\n"
 
-        # Step 2: Query rewrite (LLM-based)
-        if len(query.split()) < QUERY_REWRITE_WORD_THRESHOLD:
-            conversation_history = await _get_conversation_history(db, frontend)
-            rewritten_query = await rewrite_query(query, conversation_history)
-            if rewritten_query != query:
-                logger.info(f"Query rewritten: '{query}' -> '{rewritten_query}'")
-                yield f"data: {json.dumps({'event': 'rewrite', 'data': {'original': query, 'rewritten': rewritten_query}})}\n\n"
-        else:
-            rewritten_query = query
+        # Step 2: Get all document IDs for this intent from database
+        yield f"data: {json.dumps({'event': 'search', 'data': {'status': 'getting_documents'}})}\n\n"
+        
+        valid_doc_ids = []
+        if intent_id is not None:
+            try:
+                from sqlalchemy import select
+                from app.models.database import Document
+                result = await db.execute(
+                    select(Document.id).where(Document.intent_id == intent_id)
+                )
+                valid_doc_ids = [row[0] for row in result.fetchall()]
+                logger.info(f"Intent '{intent_name}' has {len(valid_doc_ids)} documents: {valid_doc_ids}")
+            except Exception as e:
+                logger.error(f"Failed to get documents for intent {intent_id}: {e}")
 
-        # Step 3: Hybrid search
+        # Step 3: Hybrid search (no intent filter in vectorstore)
         yield f"data: {json.dumps({'event': 'search', 'data': {'status': 'searching'}})}\n\n"
 
         search_results = await search_documents(
-            query=rewritten_query,
-            intent_id=intent_id,
-            top_k=settings.TOP_K_DOCUMENTS
+            query=query,
+            intent_id=None,  # Don't filter in vectorstore
+            top_k=REDUCED_TOP_K
         )
+
+        # Step 4: Filter by document_id (only return chunks from valid intent documents)
+        if valid_doc_ids:
+            original_count = len(search_results)
+            # DEBUG: Show all search results' document_ids
+            all_doc_ids = [r.get("document_id") for r in search_results]
+            logger.info(f"DEBUG: Search results doc_ids: {all_doc_ids}")
+            logger.info(f"DEBUG: Valid doc_ids for intent {intent_id}: {valid_doc_ids}")
+            
+            search_results = [r for r in search_results if r.get("document_id") in valid_doc_ids]
+            logger.info(f"Filtered from {original_count} to {len(search_results)} results for intent {intent_id}")
 
         yield f"data: {json.dumps({'event': 'search', 'data': {'count': len(search_results)}})}\n\n"
 
-        # Step 4: Rerank
-        yield f"data: {json.dumps({'event': 'rerank', 'data': {'status': 'reranking'}})}\n\n"
+        # Step 5: Rerank if we have results and confidence is low
+        if len(search_results) <= 2:
+            reranked_results = search_results[:settings.RERANK_TOP_K]
+            yield f"data: {json.dumps({'event': 'rerank', 'data': {'status': 'skipped', 'reason': 'few_results'}})}\n\n"
+        elif confidence > RERANK_CONFIDENCE_THRESHOLD:
+            # High confidence - skip reranking for speed
+            reranked_results = search_results[:settings.RERANK_TOP_K]
+            yield f"data: {json.dumps({'event': 'rerank', 'data': {'status': 'skipped', 'reason': 'high_confidence'}})}\n\n"
+        else:
+            # Low confidence - use reranking for better accuracy
+            yield f"data: {json.dumps({'event': 'rerank', 'data': {'status': 'reranking'}})}\n\n"
+            reranked_results = await rerank_results(
+                query=query,
+                results=search_results,
+                top_k=settings.RERANK_TOP_K
+            )
 
-        reranked_results = await rerank_results(
-            query=rewritten_query,
-            results=search_results,
-            top_k=settings.RERANK_TOP_K
-        )
-
-        # Step 5: Get dynamic threshold and check
+        # Step 6: Check confidence threshold
         conf_settings = await get_confidence_settings(db)
         threshold = conf_settings["confidence_threshold"]
 
@@ -447,7 +609,7 @@ async def process_query_streaming(
             await db.commit()
             return
 
-        # Step 6: Stream response
+        # Step 7: Stream response
         yield f"data: {json.dumps({'event': 'response', 'data': {'status': 'generating'}})}\n\n"
 
         sources = format_sources(reranked_results)
@@ -464,6 +626,16 @@ async def process_query_streaming(
             full_response += token
             yield f"data: {json.dumps({'event': 'token', 'data': {'token': token}})}\n\n"
 
+        # Validate and fix citations to match actual sources
+        full_response, corrected_sources = validate_and_fix_citations(full_response, reranked_results, query)
+        
+        # Update sources if citations were fixed
+        if corrected_sources:
+            sources = format_sources(corrected_sources)
+        
+        # Send corrected response
+        yield f"data: {json.dumps({'event': 'corrected_response', 'data': {'response': full_response}})}\n\n"
+        
         response_time = (time.time() - start_time) * 1000
 
         yield f"data: {json.dumps({'event': 'done', 'data': {'response': full_response, 'sources': sources, 'response_time': response_time, 'status': 'success'}})}\n\n"

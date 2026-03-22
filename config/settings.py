@@ -4,6 +4,11 @@ IntelliKnow KMS Configuration
 
 import os
 from pathlib import Path
+from dotenv import load_dotenv
+
+# Load .env file
+env_path = Path(__file__).parent / ".env"
+load_dotenv(env_path)
 
 # Project paths
 BASE_DIR = Path(__file__).parent.parent
@@ -11,11 +16,13 @@ DATA_DIR = BASE_DIR / "data"
 SQLITE_DIR = DATA_DIR / "sqlite"
 VECTORS_DIR = DATA_DIR / "vectors"
 UPLOADS_DIR = DATA_DIR / "uploads"
+FAISS_INDEX_DIR = VECTORS_DIR / "faiss_index"
 
 # Ensure directories exist
 SQLITE_DIR.mkdir(parents=True, exist_ok=True)
 VECTORS_DIR.mkdir(parents=True, exist_ok=True)
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+FAISS_INDEX_DIR.mkdir(parents=True, exist_ok=True)
 
 # Database
 SQLITE_PATH = SQLITE_DIR / "intelliknow.db"
@@ -36,7 +43,7 @@ SILICONCLOUD_BASE_URL = "https://api.siliconflow.cn/v1"
 # Model configs
 EMBEDDING_MODEL = "BAAI/bge-m3"
 RERANK_MODEL = "BAAI/bge-reranker-v2-m3"
-LLM_MODEL = "deepseek-ai/DeepSeek-V3"
+LLM_MODEL = "Qwen/Qwen2.5-7B-Instruct"  # Fast model for response generation
 INTENT_MODEL = "Qwen/Qwen2.5-7B-Instruct"
 
 # ============== Azure OpenAI (生产环境) ==============
@@ -53,31 +60,47 @@ DEFAULT_CONFIDENCE_THRESHOLD = 0.70  # 70%
 FALLBACK_INTENT = "General"
 
 # Weighted fusion for intent classification
-INTENT_LLM_WEIGHT = 0.7     # Weight for LLM classification (0-1)
+INTENT_LLM_WEIGHT = 0.7  # Weight for LLM classification (0-1)
 INTENT_KEYWORD_WEIGHT = 0.3  # Weight for keyword matching (0-1)
 INTENT_KEYWORD_THRESHOLD = 0.3  # Minimum keyword score to use keyword result
 
 DEFAULT_INTENTS = [
-    {"name": "HR", "description": "Human resources related questions", "keywords": ["leave", "salary", "benefits", "insurance", "onboarding", "offboarding"]},
-    {"name": "Legal", "description": "Legal compliance related questions", "keywords": ["contract", "compliance", "legal", "terms", "agreement"]},
-    {"name": "Finance", "description": "Finance and reimbursement related questions", "keywords": ["reimbursement", "invoice", "budget", "expense", "payment"]},
+    {
+        "name": "HR",
+        "description": "Human resources related questions",
+        "keywords": [
+            "leave",
+            "salary",
+            "benefits",
+            "insurance",
+            "onboarding",
+            "offboarding",
+        ],
+    },
+    {
+        "name": "Legal",
+        "description": "Legal compliance related questions",
+        "keywords": ["contract", "compliance", "legal", "terms", "agreement"],
+    },
+    {
+        "name": "Finance",
+        "description": "Finance and reimbursement related questions",
+        "keywords": ["reimbursement", "invoice", "budget", "expense", "payment"],
+    },
 ]
 
 # ============== Search Settings ==============
 
-HYBRID_SEARCH_WEIGHTS = {
-    "bm25": 0.3,
-    "vector": 0.7
-}
+HYBRID_SEARCH_WEIGHTS = {"bm25": 0.3, "vector": 0.7}
 
 RRF_K = 60  # RRF parameter for rank fusion
 
-TOP_K_DOCUMENTS = 6  # Number of documents to retrieve
-RERANK_TOP_K = 3  # Number of documents after reranking
+TOP_K_DOCUMENTS = 6  # Number of documents to retrieve (increased for better context)
+RERANK_TOP_K = 4  # Number of documents after reranking
 
 # ============== Document Processing ==============
 
-CHUNK_SIZE = 500  # Text chunk size for vectorization
+CHUNK_SIZE = 512  # Text chunk size for vectorization (2x document size for small docs)
 CHUNK_OVERLAP = 50  # Overlap between chunks
 
 # ============== Frontend Integration ==============
@@ -97,7 +120,7 @@ TEAMS_BOT_ID = os.getenv("TEAMS_BOT_ID", "")
 # 使用WebSocket长连接，无需公网域名和Verify Token
 FEISHU_APP_ID = os.getenv("FEISHU_APP_ID", "")
 FEISHU_APP_SECRET = os.getenv("FEISHU_APP_SECRET", "")
-FEISHU_BOT_NAME = os.getenv("FEISHU_BOT_NAME", "IntelliKnow 助手")
+FEISHU_BOT_NAME = os.getenv("FEISHU_BOT_NAME", "IntelliKnow Bot")
 
 # 长连接模式配置
 FEISHU_ENABLE_WS = True  # 启用WebSocket长连接
@@ -106,7 +129,9 @@ FEISHU_LOG_LEVEL = os.getenv("FEISHU_LOG_LEVEL", "INFO")  # DEBUG/INFO/WARNING/E
 # ============== Security ==============
 
 # Encryption key for credentials (32 bytes hex)
-ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+ENCRYPTION_KEY = os.getenv(
+    "ENCRYPTION_KEY", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+)
 
 # API authentication
 API_KEY = os.getenv("API_KEY", "intelliknow_dev_key")

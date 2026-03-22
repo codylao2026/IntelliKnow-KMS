@@ -1,6 +1,7 @@
 """
 IntelliKnow KMS - FastAPI Application
 """
+
 import os
 import logging
 from pathlib import Path
@@ -19,7 +20,7 @@ from app.utils.database import init_db
 # Configure logging
 logging.basicConfig(
     level=getattr(logging, settings.LOG_LEVEL),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,18 @@ async def lifespan(app: FastAPI):
     logger.info("Starting IntelliKnow KMS...")
     await init_db()
     logger.info("Database initialized")
+
+    # Initialize Feishu client (long connection mode)
+    try:
+        from app.services.frontend.feishu import init_feishu_client
+
+        if init_feishu_client():
+            logger.info("Feishu client started successfully")
+        else:
+            logger.warning("Feishu client not configured or failed to start")
+    except Exception as e:
+        logger.warning(f"Feishu initialization skipped: {e}")
+
     yield
     # Shutdown
     logger.info("Shutting down IntelliKnow KMS...")
@@ -41,7 +54,7 @@ app = FastAPI(
     title="IntelliKnow KMS",
     description="Gen AI-powered Knowledge Management System",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 # CORS middleware
@@ -63,6 +76,7 @@ async def health_check():
 
 # API routes
 from app.api import documents, intents, query, analytics, webhooks, credentials
+
 app.include_router(documents.router, prefix="/api/documents", tags=["Documents"])
 app.include_router(intents.router, prefix="/api/intents", tags=["Intents"])
 app.include_router(query.router, prefix="/api/query", tags=["Query"])
@@ -73,9 +87,7 @@ app.include_router(credentials.router, prefix="/api/credentials", tags=["Credent
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(
-        "app.main:app",
-        host=settings.API_HOST,
-        port=settings.API_PORT,
-        reload=True
+        "app.main:app", host=settings.API_HOST, port=settings.API_PORT, reload=True
     )

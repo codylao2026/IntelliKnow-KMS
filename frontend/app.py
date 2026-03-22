@@ -4,6 +4,7 @@ IntelliKnow KMS - Streamlit Admin Dashboard
 import streamlit as st
 import requests
 import pandas as pd
+import json
 from datetime import datetime
 
 # Configuration
@@ -57,7 +58,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-def api_request(method, endpoint, files=None, data=None, **kwargs):
+def api_request(method, endpoint, files=None, data=None, json=None, **kwargs):
     """Make API request with error handling"""
     url = f"{API_BASE_URL}{endpoint}"
     try:
@@ -77,9 +78,9 @@ def api_request(method, endpoint, files=None, data=None, **kwargs):
             if method == "GET":
                 response = requests.get(url)
             elif method == "POST":
-                response = requests.post(url, json=data)
+                response = requests.post(url, json=json if json is not None else data)
             elif method == "PUT":
-                response = requests.put(url, json=data)
+                response = requests.put(url, json=json if json is not None else data)
             elif method == "DELETE":
                 response = requests.delete(url)
             else:
@@ -104,71 +105,76 @@ def card_container(color_class: str):
 st.sidebar.markdown("""
 <style>
 .sidebar-title { font-size: 1.4em; font-weight: bold; color: #1E293B; }
-.menu-header { font-size: 0.9em; font-weight: bold; color: #1E293B; padding: 6px 0 2px 0; }
+.menu-header { font-size: 0.9em; font-weight: bold; color: #64748B; padding: 4px 0; }
+.nav-link { 
+    display: block; 
+    padding: 6px 12px; 
+    margin: 2px 0; 
+    border-radius: 6px; 
+    text-decoration: none;
+    color: #1E293B;
+}
+.nav-link:hover { background: #E2E8F0; }
+.nav-link.active { background: #DBEAFE; color: #1D4ED8; font-weight: 500; }
 </style>
 """, unsafe_allow_html=True)
 
 st.sidebar.title("🧠 IntelliKnow KMS")
 st.sidebar.markdown("---")
 
-# Define menu options
-admin_options = ["Dashboard", "KB Management", "Intent Configuration", "Frontend Integration", "Analytics"]
-user_options = ["Query"]
-
-# Initialize session state
+# Initialize page state
 if "current_page" not in st.session_state:
     st.session_state.current_page = "Dashboard"
-if "nav_category" not in st.session_state:
-    st.session_state.nav_category = "Admin"
-
-# Get default selection based on current page
-if st.session_state.current_page in admin_options:
-    default_admin = admin_options.index(st.session_state.current_page)
-    default_user = 0
-    st.session_state.nav_category = "Admin"
-elif st.session_state.current_page in user_options:
-    default_admin = 0
-    default_user = user_options.index(st.session_state.current_page)
-    st.session_state.nav_category = "User"
-else:
-    default_admin = 0
-    default_user = 0
-
-# Admin menu
-st.sidebar.markdown('<p class="menu-header">👨‍💼 Admin Menu</p>', unsafe_allow_html=True)
-st.sidebar.radio(
-    "Admin Navigation",
-    admin_options,
-    key="nav_radio_admin",
-    index=default_admin,
-    on_change=lambda: st.session_state.update(
-        current_page=st.session_state.nav_radio_admin,
-        nav_category="Admin"
-    )
-)
-
-st.sidebar.markdown("---")
-
-# User menu
-st.sidebar.markdown('<p class="menu-header">👤 User Menu</p>', unsafe_allow_html=True)
-st.sidebar.radio(
-    "User Navigation",
-    user_options,
-    key="nav_radio_user",
-    index=default_user,
-    on_change=lambda: st.session_state.update(
-        current_page=st.session_state.nav_radio_user,
-        nav_category="User"
-    )
-)
-
-page = st.session_state.current_page
 
 # Override to View/Update page if needed
 if st.session_state.get("view_doc_id"):
     page = "View Document"
 elif st.session_state.get("update_doc_id"):
     page = "Update Document"
+else:
+    page = st.session_state.current_page
+
+# Admin Menu
+st.sidebar.markdown('<p class="menu-header">👨‍💼 Admin Menu</p>', unsafe_allow_html=True)
+
+admin_pages = [
+    ("📊", "Dashboard"),
+    ("📚", "KB Management"),
+    ("🎯", "Intent Configuration"),
+    ("🔗", "Frontend Integration"),
+    ("📈", "Analytics")
+]
+
+for icon, page_name in admin_pages:
+    col1, col2 = st.sidebar.columns([1, 4])
+    with col1:
+        st.write(icon)
+    with col2:
+        is_active = page == page_name
+        btn_type = "primary" if is_active else "secondary"
+        if st.button(f"  {page_name}", key=f"nav_{page_name}", type=btn_type, use_container_width=True):
+            st.session_state.current_page = page_name
+            st.rerun()
+    page = st.session_state.current_page
+
+st.sidebar.markdown("---")
+
+# User Menu
+st.sidebar.markdown('<p class="menu-header">👤 User Menu</p>', unsafe_allow_html=True)
+
+user_pages = [("🔍", "Query")]
+
+for icon, page_name in user_pages:
+    col1, col2 = st.sidebar.columns([1, 4])
+    with col1:
+        st.write(icon)
+    with col2:
+        is_active = page == page_name
+        btn_type = "primary" if is_active else "secondary"
+        if st.button(f"  {page_name}", key=f"nav_{page_name}", type=btn_type, use_container_width=True):
+            st.session_state.current_page = page_name
+            st.rerun()
+    page = st.session_state.current_page
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("""
@@ -239,6 +245,54 @@ elif page == "KB Management":
     </div>
     """, unsafe_allow_html=True)
 
+    # Display persistent operation results (outside tabs so it shows after upload)
+    if "operation_result" in st.session_state and st.session_state.operation_result:
+        result = st.session_state.operation_result
+        
+        if result.get("type") == "success":
+            st.markdown(f"""
+            <div style="background: #DCFCE7; padding: 16px; border-radius: 12px; border-left: 4px solid #22C55E; margin-bottom: 16px;">
+                <h4 style="color: #15803D; margin: 0;">{result.get('icon', '✅')} {result.get('message', 'Success!')}</h4>
+                {f'<p style="color: #166534; margin: 8px 0 0 0;">{result.get("detail", "")}</p>' if result.get("detail") else ""}
+            </div>
+            """, unsafe_allow_html=True)
+            
+            if result.get("files"):
+                st.markdown(f"**{result.get('file_label', 'Files')}:**")
+                for f in result.get("files", []):
+                    st.write(f"• {f}")
+            
+            if result.get("show_progress", False):
+                st.markdown("**📊 Processing Progress:**")
+                st.progress(result.get("progress", 0), text=result.get("progress_text", ""))
+                
+        elif result.get("type") == "error":
+            st.markdown(f"""
+            <div style="background: #FEE2E2; padding: 16px; border-radius: 12px; border-left: 4px solid #EF4444; margin-bottom: 16px;">
+                <h4 style="color: #DC2626; margin: 0;">❌ {result.get('message', 'Error!')}</h4>
+            </div>
+            """, unsafe_allow_html=True)
+            if result.get("errors"):
+                for e in result.get("errors", []):
+                    st.error(e)
+        
+        # Clear operation result after displaying (use expander for manual dismiss)
+        with st.expander("📋 Operation Details", expanded=True):
+            st.write(result.get("message", ""))
+            if result.get("files"):
+                st.write(f"**{result.get('file_label', 'Files')}:**")
+                for f in result.get("files", []):
+                    st.write(f"  • {f}")
+            if result.get("errors"):
+                st.write("**Errors:**")
+                for e in result.get("errors", []):
+                    st.write(f"  • {e}")
+            if st.button("✅ Dismiss", key="btn_dismiss_result"):
+                st.session_state.operation_result = None
+                st.rerun()
+    else:
+        st.session_state.operation_result = None
+
     tab1, tab2 = st.tabs(["📋 Document List", "📤 Upload Documents"])
 
     with tab1:
@@ -256,39 +310,6 @@ elif page == "KB Management":
         doc_settings, _ = api_request("GET", "/api/intents/settings/document")
         default_chunk_size = doc_settings.get("chunk_size", 256) if doc_settings else 256
         default_chunk_overlap = doc_settings.get("chunk_overlap", 50) if doc_settings else 50
-
-        # Display persistent operation results
-        if "operation_result" in st.session_state and st.session_state.operation_result:
-            result = st.session_state.operation_result
-            
-            if result.get("type") == "success":
-                st.markdown(f"""
-                <div style="background: #DCFCE7; padding: 16px; border-radius: 12px; border-left: 4px solid #22C55E; margin-bottom: 16px;">
-                    <h4 style="color: #15803D; margin: 0;">{result.get('icon', '✅')} {result.get('message', 'Success!')}</h4>
-                    {f'<p style="color: #166534; margin: 8px 0 0 0;">{result.get("detail", "")}</p>' if result.get("detail") else ""}
-                </div>
-                """, unsafe_allow_html=True)
-                
-                if result.get("files"):
-                    st.markdown(f"**{result.get('file_label', 'Files')}:**")
-                    for f in result.get("files", []):
-                        st.write(f"• {f}")
-                
-                if result.get("show_progress", False):
-                    st.markdown("**📊 Processing Progress:**")
-                    st.progress(result.get("progress", 0), text=result.get("progress_text", ""))
-                    
-            elif result.get("type") == "error":
-                st.markdown(f"""
-                <div style="background: #FEE2E2; padding: 16px; border-radius: 12px; border-left: 4px solid #EF4444; margin-bottom: 16px;">
-                    <h4 style="color: #DC2626; margin: 0;">❌ {result.get('message', 'Error!')}</h4>
-                </div>
-                """, unsafe_allow_html=True)
-                if result.get("errors"):
-                    for e in result.get("errors", []):
-                        st.error(e)
-        else:
-            st.session_state.operation_result = None
 
         # Fetch intents for filter
         intents, _ = api_request("GET", "/api/intents")
@@ -394,7 +415,18 @@ elif page == "KB Management":
                     with row_cols[1]:
                         st.write(f"**{d['name']}**")
                     with row_cols[2]:
-                        st.write(d['created_at'][:10])
+                        # Format date with time (HH:MM:SS)
+                        created_at = d.get('created_at', '')
+                        if created_at:
+                            # Format: 2024-01-15T10:30:45 -> Jan 15, 2024 10:30:45
+                            try:
+                                dt = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                                formatted_date = dt.strftime("%b %d, %Y %H:%M:%S")
+                            except:
+                                formatted_date = created_at[:19].replace('T', ' ')
+                        else:
+                            formatted_date = '-'
+                        st.write(formatted_date)
                     with row_cols[3]:
                         st.write(d['file_type'].upper())
                     with row_cols[4]:
@@ -768,16 +800,15 @@ elif page == "KB Management":
         if "duplicate_files" not in st.session_state:
             st.session_state.duplicate_files = []
 
-        # Fetch existing documents for duplicate check (only completed ones)
+        # Fetch existing documents for duplicate check (ALL documents, not just completed)
         existing_docs, _ = api_request("GET", "/api/documents?limit=1000")
         existing_names = set()
         existing_doc_map = {}
         if existing_docs and existing_docs.get("items"):
             for d in existing_docs["items"]:
-                # Only consider completed documents as existing
-                if d.get("status") == "completed":
-                    existing_names.add(d["name"].lower())
-                    existing_doc_map[d["name"].lower()] = d
+                # Include ALL documents for duplicate detection
+                existing_names.add(d["name"].lower())
+                existing_doc_map[d["name"].lower()] = d
 
         uploaded_files = st.file_uploader(
             "Choose files (multiple allowed)",
@@ -1540,62 +1571,133 @@ elif page == "Query":
         if not query_text.strip():
             st.error("Please enter a question")
         else:
-            with st.spinner("Processing query..."):
-                payload = {
-                    "query": query_text,
-                    "frontend": frontend
-                }
-                result, error = api_request("POST", "/api/query", data=payload)
+            st.markdown("---")
+            
+            # Display processing status
+            status_container = st.empty()
+            response_container = st.empty()
+            metrics_container = st.container()
+            
+            status_container.markdown("⏳ **Processing query...** (Intent classification, Search, RAG generation)")
 
-                if error:
-                    st.error(error)
-                else:
-                    st.markdown("---")
-                    
-                    st.markdown("""
-                    <div style="background: #ECFDF5; padding: 12px 16px; border-radius: 8px; margin-bottom: 16px;">
-                        <h3 style="color: #10B981; margin: 0;">💬 Response</h3>
-                    </div>
-                    """, unsafe_allow_html=True)
-
-                    # Display intent classification
-                    col1, col2, col3, col4 = st.columns(4)
-                    with col1:
-                        st.metric("Detected Intent", result.get("intent"))
-                    with col2:
-                        st.metric("Confidence", f"{result.get('confidence', 0):.1%}")
-                    with col3:
-                        source = result.get("confidence_source", "unknown")
-                        source_display = {
-                            "llm": "🤖 LLM",
-                            "keyword": "🔑 Keyword",
-                            "fusion": "⚖️ Fusion",
-                            "hint": "💡 Hint",
-                            "error": "❌ Error",
-                            "none": "➖ None"
-                        }.get(source, source)
-                        st.metric("Source", source_display)
-                    with col4:
-                        response_time = result.get("response_time", 0)
-                        st.metric("Response Time", f"{response_time:.0f}ms")
-
-                    # Display response
-                    st.markdown(result.get("response", ""))
-
-                    # Display sources if available
-                    sources = result.get("sources", [])
-                    if sources:
-                        st.markdown("""
-                        <div style="background: #F0FDF4; padding: 12px 16px; border-radius: 8px; margin-top: 16px;">
-                            <h4 style="color: #10B981; margin: 0;">📚 Sources</h4>
-                        </div>
-                        """, unsafe_allow_html=True)
-                        for source in sources:
-                            st.info(f"**{source['document_name']}** (Score: {source['score']:.2f})")
-                            st.markdown(f"_{source['content'][:200]}..._")
-
-                    st.markdown("---")
-                    st.caption(f"Response time: {result.get('response_time', 0):.0f}ms")
+            # Use streaming API
+            import requests
+            
+            payload = {
+                "query": query_text,
+                "frontend": frontend
+            }
+            
+            full_response = ""
+            intent_info = {}
+            response_time = 0
+            
+            try:
+                # Call streaming endpoint
+                with requests.post(
+                    f"{API_BASE_URL}/api/query/stream",
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                    stream=True,
+                    timeout=60
+                ) as response:
+                    if response.status_code != 200:
+                        st.error(f"Error: {response.text}")
+                    else:
+                        # Parse SSE stream
+                        for line in response.iter_lines(decode_unicode=True):
+                            if line.startswith("data: "):
+                                data = line[6:]
+                                try:
+                                    event = json.loads(data)
+                                    
+                                    event_type = event.get("event")
+                                    event_data = event.get("data", {})
+                                    
+                                    if event_type == "intent":
+                                        intent_info = event_data
+                                        status_container.markdown("✅ **Intent classified** - Searching knowledge base...")
+                                        
+                                    elif event_type == "search":
+                                        count = event_data.get("count", 0)
+                                        status_container.markdown(f"✅ **Search complete** - Found {count} results - Generating response...")
+                                        
+                                    elif event_type == "rerank":
+                                        status = event_data.get("status", "")
+                                        if status == "skipped":
+                                            reason = event_data.get("reason", "")
+                                            status_container.markdown(f"✅ **Reranking skipped** ({reason}) - Generating response...")
+                                        else:
+                                            status_container.markdown("✅ **Reranking complete** - Generating response...")
+                                            
+                                    elif event_type == "token":
+                                        token = event_data.get("token", "")
+                                        full_response += token
+                                        # Display streaming response
+                                        response_container.markdown(f"""
+                                        <div style="background: #F0FDF4; padding: 16px; border-radius: 8px; margin-top: 8px;">
+                                            <h4 style="color: #10B981; margin: 0 0 8px 0;">💬 Response</h4>
+                                            <div style="line-height: 1.6;">{full_response}▌</div>
+                                        </div>
+                                        """, unsafe_allow_html=True)
+                                    
+                                    elif event_type == "corrected_response":
+                                        # Use corrected response if LLM said "not found" but we have contexts
+                                        corrected_text = event_data.get("response", "")
+                                        if corrected_text != full_response:
+                                            status_container.markdown("⚠️ **LLM couldn't find answer - showing knowledge base content instead**")
+                                            full_response = corrected_text
+                                        
+                                    elif event_type == "done":
+                                        response_time = event_data.get("response_time", 0)
+                                        status_container.markdown(f"✅ **Complete!** (Response time: {response_time:.0f}ms)")
+                                        
+                                        # Display final response (use full_response which may be corrected)
+                                        response_text = full_response if full_response else event_data.get("response", "")
+                                        sources = event_data.get("sources", [])
+                                        
+                                        response_container.markdown(f"""
+                                        <div style="background: #F0FDF4; padding: 16px; border-radius: 8px; margin-top: 8px;">
+                                            <h4 style="color: #10B981; margin: 0 0 8px 0;">💬 Response</h4>
+                                            <div style="line-height: 1.6;">{response_text}</div>
+                                        </div>
+                                        """, unsafe_allow_html=True)
+                                        
+                                        # Display metrics
+                                        with metrics_container:
+                                            col1, col2, col3, col4 = st.columns(4)
+                                            with col1:
+                                                st.metric("Detected Intent", intent_info.get("intent", "-"))
+                                            with col2:
+                                                conf = intent_info.get("confidence", 0)
+                                                st.metric("Confidence", f"{conf:.1%}")
+                                            with col3:
+                                                source = intent_info.get("source", "unknown")
+                                                source_display = {
+                                                    "llm": "🤖 LLM",
+                                                    "keyword": "🔑 Keyword",
+                                                    "fusion": "⚖️ Fusion",
+                                                    "hint": "💡 Hint"
+                                                }.get(source, source)
+                                                st.metric("Source", source_display)
+                                            with col4:
+                                                st.metric("Response Time", f"{response_time:.0f}ms")
+                                        
+                                        # Display sources
+                                        if sources:
+                                            st.markdown("""
+                                            <div style="background: #F0FDF4; padding: 12px 16px; border-radius: 8px; margin-top: 16px;">
+                                                <h4 style="color: #10B981; margin: 0;">📚 Sources</h4>
+                                            </div>
+                                            """, unsafe_allow_html=True)
+                                            for source in sources:
+                                                st.info(f"**{source['document_name']}** (Score: {source['score']:.2f})")
+                                                
+                                except json.JSONDecodeError:
+                                    continue
+                                    
+            except Exception as e:
+                st.error(f"Error: {str(e)}")
 
 
 # ============== Frontend Integration Page ==============
@@ -1660,6 +1762,7 @@ elif page == "Frontend Integration":
         st.markdown("""
         <div style="background: #F0F9FF; padding: 16px; border-radius: 12px; margin-bottom: 16px;">
             <h3 style="color: #3B82F6; margin: 0;">Microsoft Teams Bot</h3>
+            <p style="color: #64748B; margin: 8px 0 0 0;">Send Adaptive Cards with RAG-powered responses</p>
         </div>
         """, unsafe_allow_html=True)
 
@@ -1667,50 +1770,84 @@ elif page == "Frontend Integration":
 
         with col1:
             teams_status = status.get("teams", {})
+            teams_features = teams_status.get("status", {}).get("features", {})
             if teams_status.get("configured"):
                 st.success("✅ Teams Configured")
+                if teams_features:
+                    st.caption("Features: " + ", ".join([f for f in teams_features.keys() if teams_features.get(f)]))
             else:
                 st.warning("⚠️ Teams Not Configured")
 
         with col2:
             if teams_status.get("configured"):
-                conv_id_input = st.text_input(
-                    "Conversation ID (optional) 💡 Enter to send test message",
-                    key="teams_conv_id",
-                    placeholder="19:xxx@thread.tacv2"
-                )
-                st.caption("Format: 19:xxx@thread.tacv2 or UUID")
-                
-                if st.button("🔄 Test Teams", key="btn_test_teams", type="primary"):
-                    conv_id = st.session_state.get("teams_conv_id", "").strip()
-                    
-                    if conv_id:
-                        if not (conv_id.startswith("19:") and "@thread" in conv_id) and \
-                           not (len(conv_id) == 36 and conv_id.count("-") == 4):
-                            st.error("Invalid Conversation ID format")
-                        else:
-                            payload = {"message": "Hello from IntelliKnow!", "conversation_id": conv_id}
+                if st.button("🔄 Test Teams Connection", key="btn_test_teams", type="primary"):
+                    result, err = api_request("POST", "/api/test/teams", json={})
+                    if err:
+                        st.error(f"API error: {err}")
+                    elif result and result.get("success"):
+                        st.success(f"✅ {result.get('message', 'Connection successful')}")
+                        if result.get("hint"):
+                            st.info(result.get("hint"))
+                    else:
+                        st.error(f"❌ {result.get('error', 'Test failed') if result else 'Test failed'}")
+            else:
+                st.info("Configure credentials to enable Teams integration")
+
+        with st.expander("📤 Send Test Message to Teams"):
+            st.write("**To send a test message, you need a Conversation ID:**")
+            st.markdown("""
+            1. Open Teams and start a chat with your bot
+            2. Or add the bot to a channel and get the channel's conversation ID
+            3. The format should be like: `19:xxx@thread.tacv2`
+            """)
+            
+            conv_id = st.text_input(
+                "Conversation ID",
+                key="teams_conv_id",
+                placeholder="19:xxx@thread.tacv2"
+            )
+            
+            test_message = st.text_input(
+                "Test Message",
+                key="teams_test_msg",
+                value="Hello from IntelliKnow! 🧠"
+            )
+            
+            use_card = st.checkbox("Use Adaptive Card format", value=True, key="teams_use_card")
+            
+            if st.button("📤 Send Test Message", key="btn_send_teams_msg"):
+                if conv_id:
+                    # Validate conversation ID format
+                    if not (conv_id.startswith("19:") and "@thread" in conv_id) and \
+                       not (len(conv_id) == 36 and conv_id.count("-") == 4):
+                        st.error("Invalid Conversation ID format. Expected format: 19:xxx@thread.tacv2")
+                    else:
+                        with st.spinner("Sending message..."):
+                            payload = {
+                                "message": test_message,
+                                "conversation_id": conv_id,
+                                "use_card": use_card
+                            }
                             result, err = api_request("POST", "/api/test/teams", json=payload)
                             if err:
                                 st.error(f"API error: {err}")
                             elif result and result.get("success"):
-                                st.success(f"✅ {result.get('message', 'Test successful')}")
+                                st.success("✅ Message sent successfully!")
                             else:
-                                st.error(f"❌ {result.get('error', 'Test failed') if result else 'Test failed'}")
-                    else:
-                        result, err = api_request("POST", "/api/test/teams", json={"message": "test"})
-                        if err:
-                            st.error(f"API error: {err}")
-                        elif result and result.get("success"):
-                            st.success("✅ Credentials validated")
-                        else:
-                            st.error(f"❌ Validation failed: {result.get('error', 'Unknown') if result else 'Unknown'}")
-            else:
-                st.info("Please configure Teams credentials first")
+                                st.error(f"❌ {result.get('error', 'Failed to send') if result else 'Failed to send'}")
+                else:
+                    st.warning("Please enter a Conversation ID")
 
         with st.expander("⚙️ Configure Teams Credentials"):
-            teams_app_id = st.text_input("App ID", key="teams_app_id")
-            teams_app_pwd = st.text_input("App Password", type="password", key="teams_app_pwd")
+            st.markdown("""
+            **Setup Instructions:**
+            1. Register an app in Azure AD (Azure Portal → App registrations)
+            2. Enable Teams channel in Bot Channels Registration
+            3. Get App ID, App Password, and Tenant ID from Azure
+            """)
+            
+            teams_app_id = st.text_input("App ID (Client ID)", key="teams_app_id")
+            teams_app_pwd = st.text_input("App Password (Client Secret)", type="password", key="teams_app_pwd")
             teams_tenant = st.text_input("Tenant ID", key="teams_tenant")
 
             if st.button("💾 Save Teams Credentials", key="btn_save_teams"):
@@ -1727,10 +1864,66 @@ elif page == "Frontend Integration":
                     if err:
                         st.error(err)
                     else:
-                        st.success("Teams credentials saved successfully")
+                        st.success("Teams credentials saved successfully!")
                         st.rerun()
                 else:
-                    st.error("Please fill in all fields")
+                    st.error("Please fill in all fields (App ID, App Password, Tenant ID)")
+
+        st.markdown("---")
+
+        # Feishu Section
+        st.markdown("""
+        <div style="background: #FFF7ED; padding: 16px; border-radius: 12px; margin-bottom: 16px; border-left: 4px solid #FF6917;">
+            <h3 style="color: #FF6917; margin: 0;">飞书 Bot (Feishu)</h3>
+        </div>
+        """, unsafe_allow_html=True)
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            feishu_status = status.get("feishu", {})
+            if feishu_status.get("configured"):
+                st.success("✅ 飞书已配置")
+            else:
+                st.warning("⚠️ 飞书未配置")
+
+        with col2:
+            if feishu_status.get("configured"):
+                # Show running status
+                if feishu_status.get("running"):
+                    st.success("🔴 Bot 运行中")
+                else:
+                    st.info("⚪ Bot 未启动 (需要重启服务)")
+                
+                if st.button("🔄 测试飞书", key="btn_test_feishu", type="primary"):
+                    result, err = api_request("POST", "/api/credentials/feishu/test", json={})
+                    if err:
+                        st.error(f"API error: {err}")
+                    elif result and result.get("success"):
+                        st.success("✅ 飞书连接验证通过")
+                    else:
+                        st.error(f"❌ {result.get('error', '验证失败') if result else '验证失败'}")
+            else:
+                st.info("请先配置飞书凭据")
+
+        with st.expander("⚙️ 配置飞书凭据 (Feishu Credentials)"):
+            feishu_app_id = st.text_input("App ID", key="feishu_app_id", placeholder="cli_xxxxx")
+            feishu_app_secret = st.text_input("App Secret", type="password", key="feishu_app_secret")
+
+            if st.button("💾 保存飞书凭据", key="btn_save_feishu"):
+                if feishu_app_id and feishu_app_secret:
+                    result, err = api_request(
+                        "PUT",
+                        "/api/credentials/feishu",
+                        json={"credentials": {"app_id": feishu_app_id, "app_secret": feishu_app_secret}}
+                    )
+                    if err:
+                        st.error(err)
+                    else:
+                        st.success("飞书凭据保存成功")
+                        st.rerun()
+                else:
+                    st.error("请填写所有字段")
 
         st.markdown("---")
 
@@ -1741,13 +1934,16 @@ elif page == "Frontend Integration":
         </div>
         """, unsafe_allow_html=True)
 
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         with col1:
             st.code(f"{API_BASE_URL}/api/webhook/whatsapp", language="text")
-            st.caption("WhatsApp Webhook URL - Configure in Facebook Developer Console")
+            st.caption("WhatsApp Webhook URL")
         with col2:
             st.code(f"{API_BASE_URL}/api/webhook/teams", language="text")
-            st.caption("Teams Bot Webhook URL - Configure in Azure Portal")
+            st.caption("Teams Bot Webhook URL")
+        with col3:
+            st.code("WebSocket 长连接模式", language="text")
+            st.caption("飞书使用 WebSocket 模式")
 
 
 # ============== Analytics Page ==============
