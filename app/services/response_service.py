@@ -1,6 +1,7 @@
 """
 Response generation service - RAG pipeline
 """
+
 import json
 import logging
 import time
@@ -87,7 +88,7 @@ I could not find relevant information in the knowledge base to answer this quest
         doc_name = ctx.get("metadata", {}).get("document_name", f"Document {doc_num}")
         content = ctx.get("content", "")
         context_parts.append(f"【Document {doc_num}: {doc_name}】\n{content}")
-    
+
     context_text = "\n\n".join(context_parts)
 
     prompt = f"""KNOWLEDGE BASE DOCUMENTS:
@@ -108,20 +109,22 @@ Provide your answer:"""
     return prompt
 
 
-def validate_and_fix_citations(response: str, contexts: List[Dict[str, Any]], query: str = "") -> tuple:
+def validate_and_fix_citations(
+    response: str, contexts: List[Dict[str, Any]], query: str = ""
+) -> tuple:
     """
     Remove any citation markers from the response and handle "not found" cases
-    
+
     Args:
         response: The generated response text
         contexts: The sources (for returning)
         query: The original query (for regenerating if needed)
-        
+
     Returns:
         Tuple of (cleaned_response, contexts)
     """
     import re
-    
+
     # Get list of document names from contexts
     doc_names_to_remove = []
     if contexts:
@@ -129,63 +132,67 @@ def validate_and_fix_citations(response: str, contexts: List[Dict[str, Any]], qu
             doc_name = ctx.get("metadata", {}).get("document_name", "")
             if doc_name:
                 doc_names_to_remove.append(re.escape(doc_name))
-    
+
     # Check if LLM says it couldn't find info but we have contexts
     not_found_patterns = [
-        r'could not find',
-        r'no[t ]*relevant',
-        r'do not have.*information',
-        r'could[n\']*t find.*information',
+        r"could not find",
+        r"no[t ]*relevant",
+        r"do not have.*information",
+        r"could[n\']*t find.*information",
     ]
-    
-    llm_says_not_found = any(re.search(p, response, re.IGNORECASE) for p in not_found_patterns)
-    
+
+    llm_says_not_found = any(
+        re.search(p, response, re.IGNORECASE) for p in not_found_patterns
+    )
+
     # If LLM says not found but we have contexts, REPLACE the response entirely
     if llm_says_not_found and contexts:
         context_summaries = []
         for i, ctx in enumerate(contexts[:3]):  # Use top 3 contexts
             content = ctx.get("content", "")
-            doc_name = ctx.get("metadata", {}).get("document_name", f"Document {i+1}")
+            doc_name = ctx.get("metadata", {}).get("document_name", f"Document {i + 1}")
             if content:
                 # Clean the content
                 cleaned_content = content.strip()
                 context_summaries.append(f"【{doc_name}】\n{cleaned_content}")
-        
+
         if context_summaries:
             # Replace the "not found" response with actual knowledge base content
             response = f"""Based on the knowledge base documents, here is the relevant information:
 
-{"="*60}
+{"=" * 60}
 
-{"="*60}\n\n""".join(context_summaries)
-            logger.warning(f"LLM said not found but had {len(contexts)} contexts - REPLACED response with KB content")
-    
+{"=" * 60}\n\n""".join(context_summaries)
+            logger.warning(
+                f"LLM said not found but had {len(contexts)} contexts - REPLACED response with KB content"
+            )
+
     # Remove citation patterns
     patterns_to_remove = [
-        r'Sources?:\s*\[?[^\]]*\]?',
-        r'References?:\s*\[?[^\]]*\]?',
-        r'\[(?:doc|DOC)[0-9]+\]',
-        r'\[(?:FIN|HR|LEG)[A-Z0-9\-_]+\]',
-        r'\[\s*[A-Z]{2,3}-[A-Z]+-[0-9]+\s*[^\]]*\]',
-        r'\[\s*[A-Z]{2,3}-[A-Z]+-[0-9]+\s*\.(?:pdf|docx)\]',
-        r'【[^】]*】',
-        r'§[^§\n]*§',
+        r"Sources?:\s*\[?[^\]]*\]?",
+        r"References?:\s*\[?[^\]]*\]?",
+        r"\[(?:doc|DOC)[0-9]+\]",
+        r"\[(?:FIN|HR|LEG)[A-Z0-9\-_]+\]",
+        r"\[\s*[A-Z]{2,3}-[A-Z]+-[0-9]+\s*[^\]]*\]",
+        r"\[\s*[A-Z]{2,3}-[A-Z]+-[0-9]+\s*\.(?:pdf|docx)\]",
+        r"【[^】]*】",
+        r"§[^§\n]*§",
     ]
-    
+
     for doc_name_pattern in doc_names_to_remove:
         if doc_name_pattern:
-            patterns_to_remove.append(r'\[\s*' + doc_name_pattern + r'\s*\]')
-    
+            patterns_to_remove.append(r"\[\s*" + doc_name_pattern + r"\s*\]")
+
     for pattern in patterns_to_remove:
-        response = re.sub(pattern, '', response, flags=re.IGNORECASE)
-    
-    response = re.sub(r'\s*,\s*\[?\s*\]?\s*$', '', response)
-    response = re.sub(r'\s*\.\s*\[?\s*\]?\s*$', '', response)
-    response = re.sub(r'\s*\[\s*\]\s*$', '', response)
-    response = re.sub(r'\s+', ' ', response)
-    response = re.sub(r'\n{3,}', '\n\n', response)
+        response = re.sub(pattern, "", response, flags=re.IGNORECASE)
+
+    response = re.sub(r"\s*,\s*\[?\s*\]?\s*$", "", response)
+    response = re.sub(r"\s*\.\s*\[?\s*\]?\s*$", "", response)
+    response = re.sub(r"\s*\[\s*\]\s*$", "", response)
+    response = re.sub(r"\s+", " ", response)
+    response = re.sub(r"\n{3,}", "\n\n", response)
     response = response.strip()
-    
+
     return response, contexts
 
 
@@ -193,7 +200,7 @@ async def generate_response_from_rag(
     query: str,
     contexts: List[Dict[str, Any]],
     stream: bool = False,
-    max_response_tokens: int = 500  # Limit response length for speed
+    max_response_tokens: int = 500,  # Limit response length for speed
 ):
     """
     Generate response using RAG
@@ -214,11 +221,10 @@ async def generate_response_from_rag(
 
     try:
         if stream:
+
             async def stream_generator():
                 async for token in generate_response_stream(
-                    prompt=prompt,
-                    system_prompt=SYSTEM_PROMPT,
-                    temperature=0.3
+                    prompt=prompt, system_prompt=SYSTEM_PROMPT, temperature=0.3
                 ):
                     yield f"data: {json.dumps({'token': token})}\n\n"
                 yield f"data: {json.dumps({'done': True})}\n\n"
@@ -226,9 +232,7 @@ async def generate_response_from_rag(
             return stream_generator()
         else:
             return await generate_response(
-                prompt=prompt,
-                system_prompt=SYSTEM_PROMPT,
-                temperature=0.3
+                prompt=prompt, system_prompt=SYSTEM_PROMPT, temperature=0.3
             )
     except Exception as e:
         logger.error(f"Response generation error: {e}")
@@ -252,20 +256,22 @@ def format_sources(contexts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         doc_id = ctx.get("document_id")
         if doc_id and doc_id not in seen_ids:
             seen_ids.add(doc_id)
-            sources.append({
-                "document_id": doc_id,
-                "document_name": ctx.get("metadata", {}).get("document_name", f"Document {doc_id}"),
-                "content": ctx.get("content", "")[:200],
-                "score": ctx.get("score", 0)
-            })
+            sources.append(
+                {
+                    "document_id": doc_id,
+                    "document_name": ctx.get("metadata", {}).get(
+                        "document_name", f"Document {doc_id}"
+                    ),
+                    "content": ctx.get("content", "")[:200],
+                    "score": ctx.get("score", 0),
+                }
+            )
 
     return sources
 
 
 async def _get_conversation_history(
-    db: AsyncSession,
-    frontend: str,
-    limit: int = 3
+    db: AsyncSession, frontend: str, limit: int = 3
 ) -> List[Dict[str, str]]:
     """
     Get recent conversation history for query rewriting.
@@ -294,10 +300,7 @@ async def _get_conversation_history(
         # Build query-response pairs
         history = []
         for log in logs:
-            history.insert(0, {
-                "query": log.query,
-                "response": log.response or ""
-            })
+            history.insert(0, {"query": log.query, "response": log.response or ""})
 
         return history[-limit:] if len(history) > limit else history
 
@@ -310,7 +313,7 @@ async def process_query(
     query: str,
     db: AsyncSession,
     frontend: str = "web",
-    intent_hint: Optional[str] = None
+    intent_hint: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Full RAG pipeline for query processing (optimized for speed)
@@ -328,18 +331,16 @@ async def process_query(
 
     try:
         # Step 1: Intent classification (fast - cached intents)
-        intent_result = await classify_intent(
-            query=query,
-            db=db,
-            hint=intent_hint
-        )
+        intent_result = await classify_intent(query=query, db=db, hint=intent_hint)
 
         intent_name = intent_result["intent_name"]
         intent_id = intent_result["intent_id"]
         confidence = intent_result["confidence"]
         confidence_source = intent_result.get("confidence_source", "unknown")
 
-        logger.info(f"Query classified as '{intent_name}' with confidence {confidence} [{confidence_source}]")
+        logger.info(
+            f"Query classified as '{intent_name}' with confidence {confidence} [{confidence_source}]"
+        )
 
         # Step 2: Get all document IDs for this intent from database
         valid_doc_ids = []
@@ -347,11 +348,14 @@ async def process_query(
             try:
                 from sqlalchemy import select
                 from app.models.database import Document
+
                 result = await db.execute(
                     select(Document.id).where(Document.intent_id == intent_id)
                 )
                 valid_doc_ids = [row[0] for row in result.fetchall()]
-                logger.info(f"Intent '{intent_name}' has {len(valid_doc_ids)} documents: {valid_doc_ids}")
+                logger.info(
+                    f"Intent '{intent_name}' has {len(valid_doc_ids)} documents: {valid_doc_ids}"
+                )
             except Exception as e:
                 logger.error(f"Failed to get documents for intent {intent_id}: {e}")
 
@@ -359,11 +363,11 @@ async def process_query(
         search_results = await search_documents(
             query=query,
             intent_id=None,  # Don't filter in vectorstore
-            top_k=REDUCED_TOP_K
+            top_k=REDUCED_TOP_K,
         )
 
         logger.info(f"Found {len(search_results)} search results")
-        
+
         # Step 4: Filter by document_id (only return chunks from valid intent documents)
         if valid_doc_ids:
             original_count = len(search_results)
@@ -371,31 +375,35 @@ async def process_query(
             all_doc_ids = [r.get("document_id") for r in search_results]
             logger.info(f"Search results document_ids: {all_doc_ids}")
             logger.info(f"Valid doc_ids for intent {intent_id}: {valid_doc_ids}")
-            
-            search_results = [r for r in search_results if r.get("document_id") in valid_doc_ids]
-            logger.info(f"Filtered from {original_count} to {len(search_results)} results for intent {intent_id}")
-            
+
+            search_results = [
+                r for r in search_results if r.get("document_id") in valid_doc_ids
+            ]
+            logger.info(
+                f"Filtered from {original_count} to {len(search_results)} results for intent {intent_id}"
+            )
+
             # If filtered to 0, show why
             if len(search_results) == 0 and original_count > 0:
                 for r in search_results[:3]:
-                    logger.warning(f"Result doc_id={r.get('document_id')} not in valid_doc_ids {valid_doc_ids}")
+                    logger.warning(
+                        f"Result doc_id={r.get('document_id')} not in valid_doc_ids {valid_doc_ids}"
+                    )
 
         # Log search result details for debugging
         for i, result in enumerate(search_results[:3]):
-            logger.info(f"Final result {i+1}: doc_id={result.get('document_id')}, score={result.get('score', 0):.3f}")
+            logger.info(
+                f"Final result {i + 1}: doc_id={result.get('document_id')}, score={result.get('score', 0):.3f}"
+            )
 
-        # Step 5: Rerank if we have results
+        # Step 5: Rerank if we have results (always rerank regardless of confidence)
         if len(search_results) <= 2:
-            reranked_results = search_results[:settings.RERANK_TOP_K]
-        elif confidence > RERANK_CONFIDENCE_THRESHOLD:
-            logger.info(f"Skipping reranking (confidence {confidence:.2f} > {RERANK_CONFIDENCE_THRESHOLD})")
-            reranked_results = search_results[:settings.RERANK_TOP_K]
+            reranked_results = search_results[: settings.RERANK_TOP_K]
+            logger.info(f"Skipping reranking (only {len(search_results)} results)")
         else:
-            logger.info(f"Running reranking (confidence {confidence:.2f} <= {RERANK_CONFIDENCE_THRESHOLD})")
+            logger.info(f"Running reranking for {len(search_results)} results")
             reranked_results = await rerank_results(
-                query=query,
-                results=search_results,
-                top_k=settings.RERANK_TOP_K
+                query=query, results=search_results, top_k=settings.RERANK_TOP_K
             )
 
         # Step 6: Get dynamic confidence threshold and check
@@ -411,18 +419,20 @@ async def process_query(
         else:
             # Step 5: Generate response (always returns string since stream=False)
             response_text = await generate_response_from_rag(
-                query=query,
-                contexts=reranked_results,
-                stream=False
+                query=query, contexts=reranked_results, stream=False
             )
             if response_text is None:
                 response_text = ""
 
             # Step 6: Validate and fix citations to match actual sources
-            response_text, corrected_sources = validate_and_fix_citations(str(response_text), reranked_results, query)
+            response_text, corrected_sources = validate_and_fix_citations(
+                str(response_text), reranked_results, query
+            )
 
             # Step 7: Format sources (use corrected sources if citations were fixed)
-            sources = format_sources(corrected_sources if corrected_sources else reranked_results)
+            sources = format_sources(
+                corrected_sources if corrected_sources else reranked_results
+            )
             response_time = (time.time() - start_time) * 1000
 
             # Determine status
@@ -442,7 +452,7 @@ async def process_query(
             sources=[s["document_id"] for s in sources],
             frontend=frontend,
             status=status,
-            response_time=response_time
+            response_time=response_time,
         )
         db.add(query_log)
         await db.commit()
@@ -455,7 +465,7 @@ async def process_query(
             "confidence_source": confidence_source,
             "sources": sources,
             "response_time": response_time,
-            "status": status
+            "status": status,
         }
 
     except Exception as e:
@@ -471,7 +481,7 @@ async def process_query(
             response=f"Error: {str(e)}",
             frontend=frontend,
             status="failed",
-            response_time=response_time
+            response_time=response_time,
         )
         db.add(query_log)
         await db.commit()
@@ -483,7 +493,7 @@ async def process_query(
             "confidence": 0.0,
             "sources": [],
             "response_time": response_time,
-            "status": "failed"
+            "status": "failed",
         }
 
 
@@ -491,7 +501,7 @@ async def process_query_streaming(
     query: str,
     db: AsyncSession,
     frontend: str = "web",
-    intent_hint: Optional[str] = None
+    intent_hint: Optional[str] = None,
 ):
     """
     Streaming version of query processing for better UX (optimized for speed).
@@ -512,11 +522,7 @@ async def process_query_streaming(
         # Step 1: Intent classification
         yield f"data: {json.dumps({'event': 'intent', 'data': {'status': 'classifying'}})}\n\n"
 
-        intent_result = await classify_intent(
-            query=query,
-            db=db,
-            hint=intent_hint
-        )
+        intent_result = await classify_intent(query=query, db=db, hint=intent_hint)
 
         intent_name = intent_result["intent_name"]
         intent_id = intent_result["intent_id"]
@@ -527,17 +533,20 @@ async def process_query_streaming(
 
         # Step 2: Get all document IDs for this intent from database
         yield f"data: {json.dumps({'event': 'search', 'data': {'status': 'getting_documents'}})}\n\n"
-        
+
         valid_doc_ids = []
         if intent_id is not None:
             try:
                 from sqlalchemy import select
                 from app.models.database import Document
+
                 result = await db.execute(
                     select(Document.id).where(Document.intent_id == intent_id)
                 )
                 valid_doc_ids = [row[0] for row in result.fetchall()]
-                logger.info(f"Intent '{intent_name}' has {len(valid_doc_ids)} documents: {valid_doc_ids}")
+                logger.info(
+                    f"Intent '{intent_name}' has {len(valid_doc_ids)} documents: {valid_doc_ids}"
+                )
             except Exception as e:
                 logger.error(f"Failed to get documents for intent {intent_id}: {e}")
 
@@ -547,7 +556,7 @@ async def process_query_streaming(
         search_results = await search_documents(
             query=query,
             intent_id=None,  # Don't filter in vectorstore
-            top_k=REDUCED_TOP_K
+            top_k=REDUCED_TOP_K,
         )
 
         # Step 4: Filter by document_id (only return chunks from valid intent documents)
@@ -557,27 +566,24 @@ async def process_query_streaming(
             all_doc_ids = [r.get("document_id") for r in search_results]
             logger.info(f"DEBUG: Search results doc_ids: {all_doc_ids}")
             logger.info(f"DEBUG: Valid doc_ids for intent {intent_id}: {valid_doc_ids}")
-            
-            search_results = [r for r in search_results if r.get("document_id") in valid_doc_ids]
-            logger.info(f"Filtered from {original_count} to {len(search_results)} results for intent {intent_id}")
+
+            search_results = [
+                r for r in search_results if r.get("document_id") in valid_doc_ids
+            ]
+            logger.info(
+                f"Filtered from {original_count} to {len(search_results)} results for intent {intent_id}"
+            )
 
         yield f"data: {json.dumps({'event': 'search', 'data': {'count': len(search_results)}})}\n\n"
 
-        # Step 5: Rerank if we have results and confidence is low
+        # Step 5: Rerank if we have results (always rerank regardless of confidence)
         if len(search_results) <= 2:
-            reranked_results = search_results[:settings.RERANK_TOP_K]
+            reranked_results = search_results[: settings.RERANK_TOP_K]
             yield f"data: {json.dumps({'event': 'rerank', 'data': {'status': 'skipped', 'reason': 'few_results'}})}\n\n"
-        elif confidence > RERANK_CONFIDENCE_THRESHOLD:
-            # High confidence - skip reranking for speed
-            reranked_results = search_results[:settings.RERANK_TOP_K]
-            yield f"data: {json.dumps({'event': 'rerank', 'data': {'status': 'skipped', 'reason': 'high_confidence'}})}\n\n"
         else:
-            # Low confidence - use reranking for better accuracy
             yield f"data: {json.dumps({'event': 'rerank', 'data': {'status': 'reranking'}})}\n\n"
             reranked_results = await rerank_results(
-                query=query,
-                results=search_results,
-                top_k=settings.RERANK_TOP_K
+                query=query, results=search_results, top_k=settings.RERANK_TOP_K
             )
 
         # Step 6: Check confidence threshold
@@ -603,7 +609,7 @@ async def process_query_streaming(
                 sources=[],
                 frontend=frontend,
                 status=status,
-                response_time=response_time
+                response_time=response_time,
             )
             db.add(query_log)
             await db.commit()
@@ -619,23 +625,23 @@ async def process_query_streaming(
 
         full_response = ""
         async for token in generate_response_stream(
-            prompt=prompt,
-            system_prompt=SYSTEM_PROMPT,
-            temperature=0.3
+            prompt=prompt, system_prompt=SYSTEM_PROMPT, temperature=0.3
         ):
             full_response += token
             yield f"data: {json.dumps({'event': 'token', 'data': {'token': token}})}\n\n"
 
         # Validate and fix citations to match actual sources
-        full_response, corrected_sources = validate_and_fix_citations(full_response, reranked_results, query)
-        
+        full_response, corrected_sources = validate_and_fix_citations(
+            full_response, reranked_results, query
+        )
+
         # Update sources if citations were fixed
         if corrected_sources:
             sources = format_sources(corrected_sources)
-        
+
         # Send corrected response
         yield f"data: {json.dumps({'event': 'corrected_response', 'data': {'response': full_response}})}\n\n"
-        
+
         response_time = (time.time() - start_time) * 1000
 
         yield f"data: {json.dumps({'event': 'done', 'data': {'response': full_response, 'sources': sources, 'response_time': response_time, 'status': 'success'}})}\n\n"
@@ -651,7 +657,7 @@ async def process_query_streaming(
             sources=[s["document_id"] for s in sources],
             frontend=frontend,
             status="success",
-            response_time=response_time
+            response_time=response_time,
         )
         db.add(query_log)
         await db.commit()
