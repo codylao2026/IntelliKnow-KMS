@@ -38,3 +38,6 @@ htmlcov/
 .env
 .env.local
 *.env
+
+#docs
+docs/IntelliKnow-KMS-需求规格说明书-SRS.md
