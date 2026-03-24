@@ -116,6 +116,13 @@ TEAMS_APP_PASSWORD = os.getenv("TEAMS_APP_PASSWORD", "")
 TEAMS_TENANT_ID = os.getenv("TEAMS_TENANT_ID", "")
 TEAMS_BOT_ID = os.getenv("TEAMS_BOT_ID", "")
 
+# ============== Telegram (Polling模式) ==============
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_TEST_CHAT_ID = os.getenv("TELEGRAM_TEST_CHAT_ID", "")
+TELEGRAM_POLLING_ENABLED = (
+    os.getenv("TELEGRAM_POLLING_ENABLED", "true").lower() == "true"
+)
+
 # ============== Feishu/Lark (长连接模式) ==============
 # 使用WebSocket长连接，无需公网域名和Verify Token
 FEISHU_APP_ID = os.getenv("FEISHU_APP_ID", "")
