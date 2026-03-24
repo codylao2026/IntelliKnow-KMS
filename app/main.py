@@ -33,20 +33,31 @@ async def lifespan(app: FastAPI):
     await init_db()
     logger.info("Database initialized")
 
-    # Initialize Feishu client (long connection mode)
+    # Initialize Feishu client in background (don't block startup)
+    try:
+        import threading
+
+        thread = threading.Thread(target=_init_feishu_background, daemon=True)
+        thread.start()
+    except Exception as e:
+        logger.warning(f"Feishu initialization error: {e}")
+
+    yield
+    # Shutdown
+    logger.info("Shutting down IntelliKnow KMS...")
+
+
+def _init_feishu_background():
+    """Initialize Feishu in background thread"""
     try:
         from app.services.frontend.feishu import init_feishu_client
 
         if init_feishu_client():
             logger.info("Feishu client started successfully")
         else:
-            logger.warning("Feishu client not configured or failed to start")
+            logger.warning("Feishu not configured")
     except Exception as e:
-        logger.warning(f"Feishu initialization skipped: {e}")
-
-    yield
-    # Shutdown
-    logger.info("Shutting down IntelliKnow KMS...")
+        logger.warning(f"Feishu initialization error: {e}")
 
 
 # Create FastAPI app
