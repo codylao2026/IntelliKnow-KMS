@@ -1,0 +1,35 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.17/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.17",
+  "version": "1.0.0",
+  "id": "62069ead-995f-45ea-9498-c55b67a359ea",
+  "packageName": "com.intelliknow.kms",
+  "developer": {
+    "name": "IntelliKnow",
+    "websiteUrl": "https://xenocrystic-briery-mimi.ngrok-free.dev",
+    "privacyUrl": "https://xenocrystic-briery-mimi.ngrok-free.dev/privacy",
+    "termsOfUseUrl": "https://xenocrystic-briery-mimi.ngrok-free.dev/terms"
+  },
+  "name": {
+    "short": "IntelliKnow Bot",
+    "full": "IntelliKnow KMS Bot"
+  },
+  "description": {
+    "short": "Enterprise Knowledge Management Bot",
+    "full": "AI-powered knowledge base query bot with RAG capabilities"
+  },
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png"
+  },
+  "bots": [
+    {
+      "botId": "62069ead-995f-45ea-9498-c55b67a359ea",
+      "scopes": ["personal", "team", "groupChat"],
+      "supportsFiles": false,
+      "isNotificationOnly": false
+    }
+  ],
+  "permissions": ["identity", "messageTeamMembers"],
+  "validDomains": ["xenocrystic-briery-mimi.ngrok-free.dev"]
+}
