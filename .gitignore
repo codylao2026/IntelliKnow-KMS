@@ -25,6 +25,7 @@ Thumbs.db
 data/*.csv
 data/*.json
 !data/.gitkeep
+data/*.*
 
 # Logs
 *.log
@@ -40,6 +41,7 @@ htmlcov/
 *.env
 
 #docs
+docs/*.*
 docs/IntelliKnow-KMS-需求规格说明书-SRS.md
 docs/Telegram-集成需求补充-完成报告.md
 docs/Telegram-集成操作指南.md
@@ -47,3 +49,7 @@ docs/SRS-更新日志-Telegram 集成.md
 docs/presentation_script.md
 docs/IntelliKnow KMS - Presentation Script.docx
 UAT--intelliknow.md
+Feishu-Integration-Summary.md
+CLAUDE.md
+
+.gitignore
