@@ -123,6 +123,10 @@ TELEGRAM_POLLING_ENABLED = (
     os.getenv("TELEGRAM_POLLING_ENABLED", "true").lower() == "true"
 )
 
+# Proxy settings
+HTTP_PROXY = os.getenv("HTTP_PROXY", "")
+HTTPS_PROXY = os.getenv("HTTPS_PROXY", "")
+
 # ============== Feishu/Lark (长连接模式) ==============
 # 使用WebSocket长连接，无需公网域名和Verify Token
 FEISHU_APP_ID = os.getenv("FEISHU_APP_ID", "")
