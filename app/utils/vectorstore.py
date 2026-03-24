@@ -364,7 +364,9 @@ class VectorStore:
             self.documents.pop(idx)
 
         # 4. 重建BM25索引
-        self._build_bm25_index()
+        if self.documents:
+            tokenized_corpus = [doc.page_content.split() for doc in self.documents]
+            self.bm25 = BM25Okapi(tokenized_corpus)
 
         # 5. 保存
         self._save()
@@ -392,7 +394,10 @@ class VectorStore:
         self.faiss_store = FAISS.from_texts(
             texts, self.embedding_function, metadatas=metadatas
         )
-        self._build_bm25_index()
+        # 重建BM25
+        if self.documents:
+            tokenized_corpus = [doc.page_content.split() for doc in self.documents]
+            self.bm25 = BM25Okapi(tokenized_corpus)
         logger.info(f"Rebuilt FAISS index with {len(self.documents)} documents")
 
 
