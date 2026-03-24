@@ -369,59 +369,72 @@ class FeishuClient:
 
     def _run_ws_client(self):
         """后台线程运行WebSocket客户端"""
-        reconnect_event = threading.Event()
+        import asyncio
 
-        while self._running and self._reconnect_count < self._max_reconnects:
-            try:
-                event_handler = (
-                    lark.EventDispatcherHandler.builder(self.app_id, self.app_secret)
-                    .register_p2_im_message_receive_v1(self.do_p2_im_message_receive_v1)
-                    .build()
-                )
+        # 为飞书WebSocket创建独立的event loop
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
 
-                ws_client = lark.ws.Client(
-                    self.app_id,
-                    self.app_secret,
-                    event_handler=event_handler,
-                    log_level=self._get_log_level(),
-                )
+        try:
+            reconnect_event = threading.Event()
 
-                logger.info(
-                    f"Feishu WebSocket client starting (attempt {self._reconnect_count + 1})..."
-                )
-                ws_client.start()
-                self.ws_client = ws_client
-                self._running = True
-                self._reconnect_count = 0
-                logger.info("Feishu WebSocket client started successfully")
-
-                while self._running:
-                    time.sleep(1)
-
-            except RuntimeError as e:
-                if "event loop" in str(e).lower():
-                    logger.warning(f"Event loop conflict, waiting before retry...")
-                    time.sleep(5)
-                    self._reconnect_count += 1
-                else:
-                    raise
-            except Exception as e:
-                logger.error(f"Feishu WebSocket error: {e}")
-                self._running = False
-
-                if self._reconnect_count < self._max_reconnects:
-                    self._reconnect_count += 1
-                    delay = min(60, 2**self._reconnect_count + random.uniform(0, 5))
-                    logger.info(
-                        f"Reconnecting in {delay:.1f}s (attempt {self._reconnect_count}/{self._max_reconnects})..."
+            while self._running and self._reconnect_count < self._max_reconnects:
+                try:
+                    event_handler = (
+                        lark.EventDispatcherHandler.builder(
+                            self.app_id, self.app_secret
+                        )
+                        .register_p2_im_message_receive_v1(
+                            self.do_p2_im_message_receive_v1
+                        )
+                        .build()
                     )
-                    time.sleep(delay)
+
+                    ws_client = lark.ws.Client(
+                        self.app_id,
+                        self.app_secret,
+                        event_handler=event_handler,
+                        log_level=self._get_log_level(),
+                    )
+
+                    logger.info(
+                        f"Feishu WebSocket client starting (attempt {self._reconnect_count + 1})..."
+                    )
+                    ws_client.start()
+                    self.ws_client = ws_client
                     self._running = True
-                else:
-                    logger.error("Max reconnect attempts reached")
+                    self._reconnect_count = 0
+                    logger.info("Feishu WebSocket client started successfully")
+
+                    while self._running:
+                        time.sleep(1)
+
+                except RuntimeError as e:
+                    if "event loop" in str(e).lower():
+                        logger.warning(f"Event loop conflict, waiting before retry...")
+                        time.sleep(5)
+                        self._reconnect_count += 1
+                    else:
+                        raise
+                except Exception as e:
+                    logger.error(f"Feishu WebSocket error: {e}")
+                    self._running = False
+
+                    if self._reconnect_count < self._max_reconnects:
+                        self._reconnect_count += 1
+                        delay = min(60, 2**self._reconnect_count + random.uniform(0, 5))
+                        logger.info(
+                            f"Reconnecting in {delay:.1f}s (attempt {self._reconnect_count}/{self._max_reconnects})..."
+                        )
+                        time.sleep(delay)
+                        self._running = True
+                    else:
+                        logger.error("Max reconnect attempts reached")
+        finally:
+            loop.close()
 
     def start(self) -> bool:
-        """启动飞书客户端（长连接模式）"""
+        """启动飞书客户端（长连接模式）- 同步版本"""
         if not LARK_SDK_AVAILABLE:
             logger.error("lark_oapi SDK not installed")
             return False
@@ -437,6 +450,27 @@ class FeishuClient:
         self._running = True
         self._thread = threading.Thread(target=self._run_ws_client, daemon=False)
         self._thread.start()
+        return True
+
+    async def start_async(self) -> bool:
+        """启动飞书客户端（异步版本）- 用于FastAPI lifespan"""
+        if not LARK_SDK_AVAILABLE:
+            logger.error("lark_oapi SDK not installed")
+            return False
+
+        if not self.app_id or not self.app_secret:
+            logger.error("Feishu credentials not configured")
+            return False
+
+        if self._running:
+            logger.info("Feishu client already running")
+            return True
+
+        # 使用asyncio在后台启动
+        import asyncio
+
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, self._run_ws_client)
         return True
 
     def stop(self):

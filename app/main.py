@@ -33,12 +33,16 @@ async def lifespan(app: FastAPI):
     await init_db()
     logger.info("Database initialized")
 
-    # Initialize Feishu client in background (don't block startup)
+    # Initialize Feishu client after FastAPI is ready (use await)
     try:
-        import threading
+        from app.services.frontend.feishu import get_feishu_client
 
-        thread = threading.Thread(target=_init_feishu_background, daemon=True)
-        thread.start()
+        feishu = get_feishu_client()
+        if feishu.app_id and feishu.app_secret:
+            await feishu.start_async()
+            logger.info("Feishu client started")
+        else:
+            logger.info("Feishu not configured")
     except Exception as e:
         logger.warning(f"Feishu initialization error: {e}")
 
