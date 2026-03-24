@@ -44,35 +44,9 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Feishu initialization skipped: {e}")
 
-    # Initialize Telegram client (polling mode)
-    try:
-        from app.services.frontend.telegram import init_telegram_client
-        from config import settings
-
-        if settings.TELEGRAM_POLLING_ENABLED and settings.TELEGRAM_BOT_TOKEN:
-            if init_telegram_client():
-                logger.info("Telegram client started successfully")
-            else:
-                logger.warning("Telegram client not configured")
-        else:
-            logger.info("Telegram polling disabled")
-    except Exception as e:
-        logger.warning(f"Telegram initialization skipped: {e}")
-
     yield
     # Shutdown
     logger.info("Shutting down IntelliKnow KMS...")
-
-    # Stop Telegram client
-    try:
-        from app.services.frontend.telegram import get_telegram_client
-
-        client = get_telegram_client()
-        if client.is_running():
-            client.stop()
-            logger.info("Telegram client stopped")
-    except Exception as e:
-        logger.warning(f"Telegram shutdown error: {e}")
 
 
 # Create FastAPI app

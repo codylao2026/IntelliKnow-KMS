@@ -150,13 +150,6 @@ async def get_frontend_status(db: AsyncSession = Depends(get_db)):
     feishu_getter = _try_import_feishu()
     feishu = feishu_getter() if feishu_getter else None
 
-    # Telegram - get from settings
-    from app.services.frontend.telegram import get_telegram_client
-
-    telegram = get_telegram_client()
-    telegram_configured = bool(telegram and telegram.is_configured())
-    telegram_running = bool(telegram and telegram.is_running())
-
     # Check both database and settings
     wa_configured = (
         wa_creds and wa_creds.get("phone_number_id") and wa_creds.get("access_token")
@@ -190,12 +183,6 @@ async def get_frontend_status(db: AsyncSession = Depends(get_db)):
                 else (feishu.app_id if feishu else None)
             ),
             "running": feishu.is_running() if feishu else False,
-        },
-        "telegram": {
-            "is_configured": telegram_configured,
-            "configured": telegram_configured,
-            "running": telegram_running,
-            "mode": "Polling",
         },
     }
 
@@ -318,20 +305,3 @@ async def test_feishu(db: AsyncSession = Depends(get_db)):
         "running": client.is_running() if client else False,
         "mode": "WebSocket Long Connection",
     }
-
-
-@router.post("/test/telegram")
-async def test_telegram():
-    """Test Telegram connection"""
-    from app.services.frontend.telegram import get_telegram_client
-
-    client = get_telegram_client()
-
-    if not client.is_configured():
-        return {"success": False, "error": "Telegram not configured"}
-
-    try:
-        client.test_connection()
-        return {"success": True, "message": "Telegram test message sent"}
-    except Exception as e:
-        return {"success": False, "error": str(e)}

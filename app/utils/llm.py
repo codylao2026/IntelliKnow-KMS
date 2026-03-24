@@ -1,7 +1,6 @@
 """
 LLM client for SiliconCloud API - Using raw httpx for better compatibility
 """
-
 import os
 import json
 import logging
@@ -38,7 +37,7 @@ async def generate_response(
     system_prompt: Optional[str] = None,
     temperature: float = 0.7,
     stream: bool = False,
-    model: str = None,
+    model: str = None
 ) -> str:
     """
     Generate response from LLM using SiliconCloud API
@@ -62,21 +61,21 @@ async def generate_response(
     messages.append({"role": "user", "content": prompt})
 
     try:
-        async with httpx.AsyncClient(trust_env=False, proxy=None) as client:
+        async with httpx.AsyncClient(trust_env=False) as client:
             response = await client.post(
                 f"{get_base_url()}/chat/completions",
                 headers={
                     "Authorization": f"Bearer {get_api_key()}",
-                    "Content-Type": "application/json",
+                    "Content-Type": "application/json"
                 },
                 json={
                     "model": model,
                     "messages": messages,
                     "temperature": temperature,
                     "max_tokens": 2000,
-                    "stream": stream,
+                    "stream": stream
                 },
-                timeout=60.0,
+                timeout=60.0
             )
 
             if response.status_code != 200:
@@ -95,7 +94,7 @@ async def generate_response_stream(
     prompt: str,
     system_prompt: Optional[str] = None,
     temperature: float = 0.7,
-    model: str = None,
+    model: str = None
 ) -> Generator[str, None, None]:
     """
     Generate streaming response from LLM
@@ -118,22 +117,22 @@ async def generate_response_stream(
     messages.append({"role": "user", "content": prompt})
 
     try:
-        async with httpx.AsyncClient(trust_env=False, proxy=None) as client:
+        async with httpx.AsyncClient(trust_env=False) as client:
             async with client.stream(
                 "POST",
                 f"{get_base_url()}/chat/completions",
                 headers={
                     "Authorization": f"Bearer {get_api_key()}",
-                    "Content-Type": "application/json",
+                    "Content-Type": "application/json"
                 },
                 json={
                     "model": model,
                     "messages": messages,
                     "temperature": temperature,
                     "max_tokens": 2000,
-                    "stream": True,
+                    "stream": True
                 },
-                timeout=60.0,
+                timeout=60.0
             ) as response:
                 if response.status_code != 200:
                     logger.error(f"API error: {response.status_code}")
@@ -169,15 +168,18 @@ async def get_embeddings(texts: List[str]) -> List[List[float]]:
         List of embedding vectors
     """
     try:
-        async with httpx.AsyncClient(trust_env=False, proxy=None) as client:
+        async with httpx.AsyncClient(trust_env=False) as client:
             response = await client.post(
                 f"{get_base_url()}/embeddings",
                 headers={
                     "Authorization": f"Bearer {get_api_key()}",
-                    "Content-Type": "application/json",
+                    "Content-Type": "application/json"
                 },
-                json={"model": settings.EMBEDDING_MODEL, "input": texts},
-                timeout=30.0,
+                json={
+                    "model": settings.EMBEDDING_MODEL,
+                    "input": texts
+                },
+                timeout=30.0
             )
 
             if response.status_code != 200:
@@ -193,7 +195,9 @@ async def get_embeddings(texts: List[str]) -> List[List[float]]:
 
 
 async def classify_intent(
-    query: str, intents: List[Dict[str, Any]], confidence_threshold: float = 0.7
+    query: str,
+    intents: List[Dict[str, Any]],
+    confidence_threshold: float = 0.7
 ) -> Dict[str, Any]:
     """
     Classify query intent using LLM
@@ -206,14 +210,12 @@ async def classify_intent(
     Returns:
         Dict with intent_name, confidence
     """
-    intent_model = getattr(settings, "INTENT_MODEL", settings.LLM_MODEL)
+    intent_model = getattr(settings, 'INTENT_MODEL', settings.LLM_MODEL)
 
-    intent_list = "\n".join(
-        [
-            f"- {i['name']}: {i.get('description', '')} (keywords: {', '.join(i.get('keywords', []))})"
-            for i in intents
-        ]
-    )
+    intent_list = "\n".join([
+        f"- {i['name']}: {i.get('description', '')} (keywords: {', '.join(i.get('keywords', []))})"
+        for i in intents
+    ])
 
     prompt = f"""Please classify the user's question into one of the available intents.
 
@@ -230,20 +232,20 @@ Only return JSON, no other content."""
     try:
         messages = [{"role": "user", "content": prompt}]
 
-        async with httpx.AsyncClient(trust_env=False, proxy=None) as client:
+        async with httpx.AsyncClient(trust_env=False) as client:
             response = await client.post(
                 f"{get_base_url()}/chat/completions",
                 headers={
                     "Authorization": f"Bearer {get_api_key()}",
-                    "Content-Type": "application/json",
+                    "Content-Type": "application/json"
                 },
                 json={
                     "model": intent_model,
                     "messages": messages,
                     "temperature": 0.3,
-                    "max_tokens": 200,
+                    "max_tokens": 200
                 },
-                timeout=60.0,
+                timeout=30.0
             )
 
             if response.status_code != 200:
@@ -263,11 +265,16 @@ Only return JSON, no other content."""
 
             parsed = json.loads(result_text.strip())
 
-            logger.info(
-                f"Intent classified: {parsed.get('intent')} ({parsed.get('confidence', 0):.2f})"
-            )
+            # Apply threshold
+            if parsed.get("confidence", 0) < confidence_threshold:
+                parsed["intent"] = settings.FALLBACK_INTENT
+
+            logger.info(f"Intent classified: {parsed.get('intent')} ({parsed.get('confidence', 0):.2f})")
             return parsed
 
     except Exception as e:
-        logger.error(f"Intent classification error: {e}", exc_info=True)
-        return {"intent": settings.FALLBACK_INTENT, "confidence": 0.5}
+        logger.error(f"Intent classification error: {e}")
+        return {
+            "intent": settings.FALLBACK_INTENT,
+            "confidence": 0.5
+        }

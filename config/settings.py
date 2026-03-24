@@ -43,8 +43,8 @@ SILICONCLOUD_BASE_URL = "https://api.siliconflow.cn/v1"
 # Model configs
 EMBEDDING_MODEL = "BAAI/bge-m3"
 RERANK_MODEL = "BAAI/bge-reranker-v2-m3"
-LLM_MODEL = "Qwen/Qwen2.5-14B-Instruct"  # Stronger model for response generation
-INTENT_MODEL = "Qwen/Qwen2.5-7B-Instruct"  # Fast model for intent classification
+LLM_MODEL = "Qwen/Qwen2.5-7B-Instruct"  # Fast model for response generation
+INTENT_MODEL = "Qwen/Qwen2.5-7B-Instruct"
 
 # ============== Azure OpenAI (生产环境) ==============
 
@@ -60,8 +60,8 @@ DEFAULT_CONFIDENCE_THRESHOLD = 0.70  # 70%
 FALLBACK_INTENT = "General"
 
 # Weighted fusion for intent classification
-INTENT_LLM_WEIGHT = 0.5  # Weight for LLM classification (0-1)
-INTENT_KEYWORD_WEIGHT = 0.5  # Weight for keyword matching (0-1)
+INTENT_LLM_WEIGHT = 0.7  # Weight for LLM classification (0-1)
+INTENT_KEYWORD_WEIGHT = 0.3  # Weight for keyword matching (0-1)
 INTENT_KEYWORD_THRESHOLD = 0.3  # Minimum keyword score to use keyword result
 
 DEFAULT_INTENTS = [
@@ -125,17 +125,6 @@ FEISHU_BOT_NAME = os.getenv("FEISHU_BOT_NAME", "IntelliKnow Bot")
 # 长连接模式配置
 FEISHU_ENABLE_WS = True  # 启用WebSocket长连接
 FEISHU_LOG_LEVEL = os.getenv("FEISHU_LOG_LEVEL", "INFO")  # DEBUG/INFO/WARNING/ERROR
-
-# ============== Telegram ==============
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_POLLING_ENABLED = (
-    os.getenv("TELEGRAM_POLLING_ENABLED", "true").lower() == "true"
-)
-TELEGRAM_TEST_CHAT_ID = os.getenv("TELEGRAM_TEST_CHAT_ID", "8516506339")
-
-# ============== Proxy ==============
-HTTP_PROXY = os.getenv("HTTP_PROXY", "")
-HTTPS_PROXY = os.getenv("HTTPS_PROXY", "")
 
 # ============== Security ==============
 

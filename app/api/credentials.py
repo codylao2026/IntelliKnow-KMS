@@ -1,7 +1,6 @@
 """
 Credential API routes
 """
-
 import json
 import logging
 import base64
@@ -38,140 +37,128 @@ class CredentialUpdate(BaseModel):
 
 
 @router.get("")
-async def list_credentials():
-    """List all frontend credentials (from .env)"""
-    from app.utils.env_manager import get_all_credentials
+async def list_credentials(db: AsyncSession = Depends(get_db)):
+    """List all frontend credentials"""
+    result = await db.execute(select(Credential))
+    credentials = result.scalars().all()
 
-    all_creds = get_all_credentials()
-
-    frontend_types = ["whatsapp", "teams", "feishu", "telegram"]
-    items = []
-
-    for ft in frontend_types:
-        is_configured = ft in all_creds and bool(all_creds[ft])
-        items.append(
+    return {
+        "items": [
             {
-                "frontend_type": ft,
-                "is_active": is_configured,
+                "frontend_type": cred.frontend_type,
+                "is_active": cred.is_active,
+                "updated_at": cred.updated_at.isoformat()
             }
-        )
-
-    return {"items": items}
+            for cred in credentials
+        ]
+    }
 
 
 @router.get("/{frontend_type}")
-async def get_credential(frontend_type: str):
+async def get_credential(
+    frontend_type: str,
+    db: AsyncSession = Depends(get_db)
+):
     """Get credential status (without sensitive data)"""
-    from app.utils.env_manager import read_env_var
+    result = await db.execute(
+        select(Credential).where(Credential.frontend_type == frontend_type)
+    )
+    cred = result.scalar_one_or_none()
 
-    if frontend_type == "feishu":
-        app_id = read_env_var("FEISHU_APP_ID", "")
-        is_configured = bool(app_id)
-    elif frontend_type == "telegram":
-        token = read_env_var("TELEGRAM_BOT_TOKEN", "")
-        is_configured = bool(token)
-    elif frontend_type == "whatsapp":
-        phone_id = read_env_var("WHATSAPP_PHONE_NUMBER_ID", "")
-        is_configured = bool(phone_id)
-    elif frontend_type == "teams":
-        app_id = read_env_var("TEAMS_APP_ID", "")
-        is_configured = bool(app_id)
-    else:
-        is_configured = False
+    if not cred:
+        return {
+            "frontend_type": frontend_type,
+            "is_configured": False,
+            "is_active": False
+        }
 
     return {
-        "frontend_type": frontend_type,
-        "is_configured": is_configured,
-        "is_active": is_configured,
+        "frontend_type": cred.frontend_type,
+        "is_configured": True,
+        "is_active": cred.is_active,
+        "updated_at": cred.updated_at.isoformat()
     }
 
 
 @router.put("/{frontend_type}")
-async def update_credential(frontend_type: str, data: CredentialUpdate):
-    """Update frontend credentials (save to .env file)"""
-    from app.utils.env_manager import save_env_var
-
+async def update_credential(
+    frontend_type: str,
+    data: CredentialUpdate,
+    db: AsyncSession = Depends(get_db)
+):
+    """Update frontend credentials"""
     # Validate frontend type
-    if frontend_type not in ["whatsapp", "teams", "feishu", "telegram"]:
+    if frontend_type not in ["whatsapp", "teams", "feishu"]:
         raise HTTPException(status_code=400, detail="Invalid frontend type")
 
-    creds = data.credentials
+    cipher = get_cipher()
 
-    if frontend_type == "feishu":
-        app_id = creds.get("app_id", "")
-        app_secret = creds.get("app_secret", "")
-        if not app_id or not app_secret:
-            raise HTTPException(
-                status_code=400, detail="app_id and app_secret required"
-            )
+    # Encrypt credentials
+    try:
+        cred_json = json.dumps(data.credentials)
+        encrypted = cipher.encrypt(cred_json.encode()).decode()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Encryption error: {e}")
 
-        save_env_var("FEISHU_APP_ID", app_id)
-        save_env_var("FEISHU_APP_SECRET", app_secret)
+    # Check if exists
+    result = await db.execute(
+        select(Credential).where(Credential.frontend_type == frontend_type)
+    )
+    cred = result.scalar_one_or_none()
 
-    elif frontend_type == "telegram":
-        bot_token = creds.get("bot_token", "")
-        if not bot_token:
-            raise HTTPException(status_code=400, detail="bot_token required")
+    if cred:
+        cred.credentials_json = encrypted
+        cred.is_active = True
+    else:
+        cred = Credential(
+            frontend_type=frontend_type,
+            credentials_json=encrypted,
+            is_active=True
+        )
+        db.add(cred)
 
-        save_env_var("TELEGRAM_BOT_TOKEN", bot_token)
+    await db.commit()
 
-    elif frontend_type == "whatsapp":
-        phone_number_id = creds.get("phone_number_id", "")
-        access_token = creds.get("access_token", "")
-        if not phone_number_id or not access_token:
-            raise HTTPException(
-                status_code=400, detail="phone_number_id and access_token required"
-            )
-
-        save_env_var("WHATSAPP_PHONE_NUMBER_ID", phone_number_id)
-        save_env_var("WHATSAPP_ACCESS_TOKEN", access_token)
-
-    elif frontend_type == "teams":
-        app_id = creds.get("app_id", "")
-        app_password = creds.get("app_password", "")
-        tenant_id = creds.get("tenant_id", "")
-        if not app_id or not app_password:
-            raise HTTPException(
-                status_code=400, detail="app_id and app_password required"
-            )
-
-        save_env_var("TEAMS_APP_ID", app_id)
-        save_env_var("TEAMS_APP_PASSWORD", app_password)
-        if tenant_id:
-            save_env_var("TEAMS_TENANT_ID", tenant_id)
-
-    return {"message": f"{frontend_type} credentials saved to .env"}
+    return {"message": f"{frontend_type} credentials updated successfully"}
 
 
 @router.delete("/{frontend_type}")
-async def delete_credential(frontend_type: str):
+async def delete_credential(
+    frontend_type: str,
+    db: AsyncSession = Depends(get_db)
+):
     """Delete frontend credentials"""
-    from app.utils.env_manager import save_env_var
+    result = await db.execute(
+        select(Credential).where(Credential.frontend_type == frontend_type)
+    )
+    cred = result.scalar_one_or_none()
 
-    if frontend_type not in ["whatsapp", "teams", "feishu", "telegram"]:
-        raise HTTPException(status_code=400, detail="Invalid frontend type")
+    if not cred:
+        raise HTTPException(status_code=404, detail="Credential not found")
 
-    if frontend_type == "feishu":
-        save_env_var("FEISHU_APP_ID", "")
-        save_env_var("FEISHU_APP_SECRET", "")
-    elif frontend_type == "telegram":
-        save_env_var("TELEGRAM_BOT_TOKEN", "")
-    elif frontend_type == "whatsapp":
-        save_env_var("WHATSAPP_PHONE_NUMBER_ID", "")
-        save_env_var("WHATSAPP_ACCESS_TOKEN", "")
-    elif frontend_type == "teams":
-        save_env_var("TEAMS_APP_ID", "")
-        save_env_var("TEAMS_APP_PASSWORD", "")
+    await db.delete(cred)
+    await db.commit()
 
-    return {"message": f"{frontend_type} credentials deleted"}
+    return {"message": f"{frontend_type} credentials deleted successfully"}
 
 
 @router.post("/{frontend_type}/test")
-async def test_credential(frontend_type: str):
+async def test_credential(
+    frontend_type: str,
+    db: AsyncSession = Depends(get_db)
+):
     """Test frontend connection"""
+    result = await db.execute(
+        select(Credential).where(Credential.frontend_type == frontend_type)
+    )
+    cred = result.scalar_one_or_none()
+
+    if not cred:
+        return {"success": False, "error": "Credentials not configured"}
+
+    # Try to test connection
     if frontend_type == "whatsapp":
         from app.services.frontend.whatsapp import get_whatsapp_client
-
         client = get_whatsapp_client()
 
         if not client.phone_number_id or not client.access_token:
@@ -181,7 +168,6 @@ async def test_credential(frontend_type: str):
 
     elif frontend_type == "teams":
         from app.services.frontend.teams import get_teams_client
-
         client = get_teams_client()
 
         if not client.app_id or not client.app_password:
@@ -191,32 +177,11 @@ async def test_credential(frontend_type: str):
 
     elif frontend_type == "feishu":
         from app.services.frontend.feishu import get_feishu_client
-
         client = get_feishu_client()
 
         if not client.app_id or not client.app_secret:
             return {"success": False, "error": "Feishu not configured in settings"}
 
-        return {
-            "success": True,
-            "message": "Feishu connection configured",
-            "running": client.is_running(),
-        }
-
-    elif frontend_type == "telegram":
-        from app.services.frontend.telegram import get_telegram_client
-        from config import settings
-
-        client = get_telegram_client()
-
-        if not client.is_configured():
-            return {"success": False, "error": "Telegram not configured"}
-
-        try:
-            test_chat_id = int(settings.TELEGRAM_TEST_CHAT_ID)
-            client.test_connection(test_chat_id)
-            return {"success": True, "message": "Telegram test message sent"}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
+        return {"success": True, "message": "Feishu connection configured"}
 
     return {"success": False, "error": "Unknown frontend type"}

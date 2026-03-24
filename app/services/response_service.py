@@ -344,11 +344,6 @@ async def process_query(
 
         # Step 2: Get all document IDs for this intent from database
         valid_doc_ids = []
-        # 修复: 默认无文档，仅在查到有效文档时设为True
-        has_intent_docs = False
-        logger.info(
-            f"[CRITICAL] Step 2: intent_name={intent_name}, intent_id={intent_id}"
-        )
         if intent_id is not None:
             try:
                 from sqlalchemy import select
@@ -361,54 +356,10 @@ async def process_query(
                 logger.info(
                     f"Intent '{intent_name}' has {len(valid_doc_ids)} documents: {valid_doc_ids}"
                 )
-                # 修复: 只有查到文档时才标记为True
-                has_intent_docs = len(valid_doc_ids) > 0
-                if not has_intent_docs:
-                    logger.warning(
-                        f"Intent '{intent_name}' has no documents in database"
-                    )
             except Exception as e:
                 logger.error(f"Failed to get documents for intent {intent_id}: {e}")
-                # 修复: 异常时明确标记无文档
-                has_intent_docs = False
 
-        # Step 3: Check if intent has no documents - return early
-        logger.info(
-            f"DEBUG BEFORE CHECK: has_intent_docs={has_intent_docs}, valid_doc_ids={valid_doc_ids}, intent_id={intent_id}"
-        )
-        if not has_intent_docs:
-            logger.info(f"=== ENTERING EARLY RETURN for intent '{intent_name}' ===")
-            response_text = "I couldn't find relevant documents for your query in the knowledge base. Please try rephrasing or contact the administrator."
-            sources = []
-            status = "no_intent_documents"
-            response_time = (time.time() - start_time) * 1000
-
-            query_log = QueryLog(
-                query=query,
-                intent_name=intent_name,
-                intent_id=intent_id,
-                confidence=0.0,
-                confidence_source="no_documents",
-                response=response_text,
-                sources=[],
-                frontend=frontend,
-                status=status,
-                response_time=response_time,
-            )
-            db.add(query_log)
-            await db.commit()
-
-            return {
-                "response": response_text,
-                "intent": intent_name,
-                "confidence": 0.0,
-                "confidence_source": "no_documents",
-                "sources": sources,
-                "status": status,
-                "response_time": response_time,
-            }
-
-        # Step 4: Hybrid search (no intent filter in vectorstore)
+        # Step 3: Hybrid search (no intent filter in vectorstore)
         search_results = await search_documents(
             query=query,
             intent_id=None,  # Don't filter in vectorstore
@@ -455,44 +406,12 @@ async def process_query(
                 query=query, results=search_results, top_k=settings.RERANK_TOP_K
             )
 
-        # Step 6: Calculate answer confidence based on search/rerank results (not intent classification)
-        answer_confidence = 0.0
-        answer_confidence_source = "search"
-
-        if not reranked_results:
-            answer_confidence = 0.0
-            answer_confidence_source = "no_results"
-        else:
-            # Calculate confidence based on top rerank score
-            top_score = reranked_results[0].get(
-                "rerank_score", reranked_results[0].get("score", 0)
-            )
-            # Normalize: assume score > 0.8 is high confidence, < 0.3 is low
-            if top_score >= 0.8:
-                answer_confidence = 0.95
-            elif top_score >= 0.5:
-                answer_confidence = 0.7
-            elif top_score >= 0.3:
-                answer_confidence = 0.5
-            else:
-                answer_confidence = 0.3
-
-            # Boost if we have multiple good results
-            if len(reranked_results) >= 3 and top_score >= 0.5:
-                answer_confidence = min(0.95, answer_confidence + 0.1)
-
-            answer_confidence_source = "rerank"
-
-        logger.info(
-            f"Answer confidence: {answer_confidence:.2f} [{answer_confidence_source}] based on {len(reranked_results)} results, top_score={top_score if reranked_results else 0:.3f}"
-        )
-
-        # Step 7: Get dynamic confidence threshold and check
+        # Step 6: Get dynamic confidence threshold and check
         conf_settings = await get_confidence_settings(db)
         threshold = conf_settings["confidence_threshold"]
 
-        # Check confidence threshold using answer confidence (not intent classification confidence)
-        if answer_confidence < threshold:
+        # Check confidence threshold
+        if confidence < threshold:
             response_text = "I couldn't find a suitable answer to your question in the knowledge base. Please try rephrasing your question or contact the administrator for assistance."
             sources = []
             status = "low_confidence"
@@ -505,8 +424,15 @@ async def process_query(
             if response_text is None:
                 response_text = ""
 
-            # Step 6: Format sources
-            sources = format_sources(reranked_results)
+            # Step 6: Validate and fix citations to match actual sources
+            response_text, corrected_sources = validate_and_fix_citations(
+                str(response_text), reranked_results, query
+            )
+
+            # Step 7: Format sources (use corrected sources if citations were fixed)
+            sources = format_sources(
+                corrected_sources if corrected_sources else reranked_results
+            )
             response_time = (time.time() - start_time) * 1000
 
             # Determine status
@@ -515,13 +441,13 @@ async def process_query(
             else:
                 status = "success"
 
-        # Step 8: Log query (use answer confidence, not intent classification confidence)
+        # Step 7: Log query
         query_log = QueryLog(
             query=query,
             intent_name=intent_name,
             intent_id=intent_id,
-            confidence=answer_confidence,
-            confidence_source=answer_confidence_source,
+            confidence=confidence,
+            confidence_source=confidence_source,
             response=response_text,
             sources=[s["document_id"] for s in sources],
             frontend=frontend,
@@ -535,8 +461,8 @@ async def process_query(
             "query": query,
             "response": response_text,
             "intent": intent_name,
-            "confidence": answer_confidence,
-            "confidence_source": answer_confidence_source,
+            "confidence": confidence,
+            "confidence_source": confidence_source,
             "sources": sources,
             "response_time": response_time,
             "status": status,
@@ -565,7 +491,6 @@ async def process_query(
             "response": "Sorry, an error occurred while processing your query. Please try again later.",
             "intent": "error",
             "confidence": 0.0,
-            "confidence_source": "error",
             "sources": [],
             "response_time": response_time,
             "status": "failed",
@@ -610,8 +535,6 @@ async def process_query_streaming(
         yield f"data: {json.dumps({'event': 'search', 'data': {'status': 'getting_documents'}})}\n\n"
 
         valid_doc_ids = []
-        # 修复: 默认无文档，仅在查到有效文档时设为True
-        has_intent_docs = False
         if intent_id is not None:
             try:
                 from sqlalchemy import select
@@ -624,44 +547,10 @@ async def process_query_streaming(
                 logger.info(
                     f"Intent '{intent_name}' has {len(valid_doc_ids)} documents: {valid_doc_ids}"
                 )
-                # 修复: 只有查到文档时才标记为True
-                has_intent_docs = len(valid_doc_ids) > 0
-                if not has_intent_docs:
-                    logger.warning(
-                        f"Intent '{intent_name}' has no documents in database"
-                    )
             except Exception as e:
                 logger.error(f"Failed to get documents for intent {intent_id}: {e}")
-                # 修复: 异常时明确标记无文档
-                has_intent_docs = False
 
-        # Step 3: Check if intent has no documents - return early
-        if not has_intent_docs:
-            logger.info(f"=== ENTERING EARLY RETURN for intent '{intent_name}' ===")
-            response_text = "I couldn't find relevant documents for your query in the knowledge base. Please try rephrasing or contact the administrator."
-            sources = []
-            status = "no_intent_documents"
-            response_time = (time.time() - start_time) * 1000
-
-            yield f"data: {json.dumps({'event': 'done', 'data': {'response': response_text, 'sources': sources, 'response_time': response_time, 'status': status}})}\n\n"
-
-            query_log = QueryLog(
-                query=query,
-                intent_name=intent_name,
-                intent_id=intent_id,
-                confidence=0.0,
-                confidence_source="no_documents",
-                response=response_text,
-                sources=[],
-                frontend=frontend,
-                status=status,
-                response_time=response_time,
-            )
-            db.add(query_log)
-            await db.commit()
-            return
-
-        # Step 4: Hybrid search (no intent filter in vectorstore)
+        # Step 3: Hybrid search (no intent filter in vectorstore)
         yield f"data: {json.dumps({'event': 'search', 'data': {'status': 'searching'}})}\n\n"
 
         search_results = await search_documents(
@@ -742,7 +631,19 @@ async def process_query_streaming(
             yield f"data: {json.dumps({'event': 'token', 'data': {'token': token}})}\n\n"
 
         # Validate and fix citations to match actual sources
-        # Send response
+        full_response, corrected_sources = validate_and_fix_citations(
+            full_response, reranked_results, query
+        )
+
+        # Update sources if citations were fixed
+        if corrected_sources:
+            sources = format_sources(corrected_sources)
+
+        # Send corrected response
+        yield f"data: {json.dumps({'event': 'corrected_response', 'data': {'response': full_response}})}\n\n"
+
+        response_time = (time.time() - start_time) * 1000
+
         yield f"data: {json.dumps({'event': 'done', 'data': {'response': full_response, 'sources': sources, 'response_time': response_time, 'status': 'success'}})}\n\n"
 
         # Log query

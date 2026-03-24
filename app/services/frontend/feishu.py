@@ -369,10 +369,6 @@ class FeishuClient:
 
     def _run_ws_client(self):
         """后台线程运行WebSocket客户端"""
-        import nest_asyncio
-
-        nest_asyncio.apply()
-
         reconnect_event = threading.Event()
 
         while self._running and self._reconnect_count < self._max_reconnects:
