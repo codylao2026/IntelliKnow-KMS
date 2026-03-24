@@ -466,11 +466,12 @@ class FeishuClient:
             logger.info("Feishu client already running")
             return True
 
-        # 使用asyncio在后台启动
+        # 不等待，直接在后台线程启动
         import asyncio
 
         loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, self._run_ws_client)
+        loop.run_in_executor(None, self._run_ws_client)
+        logger.info("Feishu background thread started")
         return True
 
     def stop(self):

@@ -1,6 +1,7 @@
 """
 Vector store service - FAISS + BM25 Hybrid Search
 """
+
 import os
 import json
 import logging
@@ -36,9 +37,9 @@ class VectorStore:
     def _get_embedding_function(self):
         """Get embedding function for FAISS"""
         import os
-        
+
         api_key = os.getenv("SILICONCLOUD_API_KEY", "")
-        
+
         if api_key:
             logger.info("Using SiliconCloud API for embeddings")
             os.environ.pop("HTTP_PROXY", None)
@@ -47,14 +48,16 @@ class VectorStore:
             os.environ.pop("https_proxy", None)
             os.environ.pop("ALL_PROXY", None)
             os.environ.pop("all_proxy", None)
-            
+
             return OpenAIEmbeddings(
                 api_key=api_key,
                 base_url="https://api.siliconflow.cn/v1",
-                model="BAAI/bge-m3"
+                model="BAAI/bge-m3",
             )
         else:
-            logger.error("No API key configured for embeddings. Please set SILICONCLOUD_API_KEY in .env")
+            logger.error(
+                "No API key configured for embeddings. Please set SILICONCLOUD_API_KEY in .env"
+            )
             raise ValueError("SILICONCLOUD_API_KEY not configured")
 
     def _load_or_create(self):
@@ -64,7 +67,7 @@ class VectorStore:
                 self.faiss_store = FAISS.load_local(
                     str(VECTOR_STORE_PATH),
                     self._get_embedding_function(),
-                    allow_dangerous_deserialization=True
+                    allow_dangerous_deserialization=True,
                 )
                 logger.info("Loaded existing FAISS index")
             except Exception as e:
@@ -118,7 +121,7 @@ class VectorStore:
         texts: List[str],
         document_id: int,
         intent_id: Optional[int] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> List[int]:
         """
         Add documents to the vector store
@@ -142,8 +145,8 @@ class VectorStore:
                 metadata={
                     "document_id": document_id,
                     "intent_id": intent_id,
-                    **metadata
-                }
+                    **metadata,
+                },
             )
             for text in texts
         ]
@@ -151,8 +154,7 @@ class VectorStore:
         # Add to FAISS
         if self.faiss_store is None:
             self.faiss_store = FAISS.from_documents(
-                docs,
-                self._get_embedding_function()
+                docs, self._get_embedding_function()
             )
         else:
             self.faiss_store.add_documents(docs)
@@ -187,10 +189,7 @@ class VectorStore:
         return vector_ids
 
     def search(
-        self,
-        query: str,
-        intent_id: Optional[int] = None,
-        top_k: int = 5
+        self, query: str, intent_id: Optional[int] = None, top_k: int = 5
     ) -> List[Dict[str, Any]]:
         """
         Hybrid search using FAISS and BM25 with RRF (Reciprocal Rank Fusion)
@@ -210,8 +209,10 @@ class VectorStore:
         if self.faiss_store is None or self.bm25 is None:
             logger.warning("No vector store available")
             return []
-            
-        logger.info(f"Searching with query='{query}', intent_id={intent_id}, top_k={top_k}")
+
+        logger.info(
+            f"Searching with query='{query}', intent_id={intent_id}, top_k={top_k}"
+        )
         logger.info(f"Total documents in vector store: {len(self.documents)}")
 
         # RRF parameter (default 60)
@@ -219,16 +220,17 @@ class VectorStore:
 
         # FAISS search - get more results for fusion
         faiss_results = self.faiss_store.similarity_search_with_score(
-            query,
-            k=top_k * 3
+            query, k=top_k * 3
         )
         logger.info(f"FAISS returned {len(faiss_results)} results")
 
         # BM25 search
         tokenized_query = query.split()
         bm25_scores = self.bm25.get_scores(tokenized_query)
-        bm25_top_indices = np.argsort(bm25_scores)[::-1][:top_k * 3]
-        logger.info(f"BM25 returned {len(bm25_top_indices)} results with non-zero scores")
+        bm25_top_indices = np.argsort(bm25_scores)[::-1][: top_k * 3]
+        logger.info(
+            f"BM25 returned {len(bm25_top_indices)} results with non-zero scores"
+        )
 
         # Build a content-to-index map to avoid object identity issues
         content_to_idx = {}
@@ -237,8 +239,13 @@ class VectorStore:
 
         # DEBUG: Show what FAISS returned vs what we have
         if faiss_results:
-            faiss_doc_ids = [d.metadata.get("document_id") for d, _ in faiss_results[:3]]
-            self_doc_ids = [self.documents[i].metadata.get("document_id") for i in content_to_idx.values()]
+            faiss_doc_ids = [
+                d.metadata.get("document_id") for d, _ in faiss_results[:3]
+            ]
+            self_doc_ids = [
+                self.documents[i].metadata.get("document_id")
+                for i in content_to_idx.values()
+            ]
             logger.info(f"DEBUG FAISS result doc_ids: {faiss_doc_ids}")
             logger.info(f"DEBUG self.documents doc_ids (first 10): {self_doc_ids[:10]}")
 
@@ -252,7 +259,9 @@ class VectorStore:
         for rank, (doc, score) in enumerate(faiss_results):
             doc_idx = content_to_idx.get(doc.page_content)
             if doc_idx is None:
-                logger.warning(f"DEBUG: FAISS doc not found in self.documents by content! FAISS doc_id={doc.metadata.get('document_id')}")
+                logger.warning(
+                    f"DEBUG: FAISS doc not found in self.documents by content! FAISS doc_id={doc.metadata.get('document_id')}"
+                )
                 # Skip mismatched documents - this indicates index corruption
                 continue
             rrf_scores[doc_idx] = rrf_scores.get(doc_idx, 0) + 1.0 / (rrf_k + rank)
@@ -265,51 +274,52 @@ class VectorStore:
         # Sort by RRF score
         sorted_results = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
         logger.info(f"RRF fusion returned {len(sorted_results)} results")
-        for doc_idx, score in sorted_results[:top_k * 3]:
+        for doc_idx, score in sorted_results[: top_k * 3]:
             if len(results) >= top_k:
                 break
-            
+
             if doc_idx >= len(self.documents):
                 continue
-                
+
             doc = self.documents[doc_idx]
-            
+
             # Skip deleted documents
             if doc.metadata.get("deleted", False):
                 logger.debug(f"Skipping deleted document {doc_idx}")
                 continue
-            
+
             # Skip documents without content
             if not doc.page_content or not doc.page_content.strip():
                 logger.debug(f"Skipping empty document {doc_idx}")
                 continue
-            
+
             # Store intent_id for later filtering in response_service
             doc_intent_id = doc.metadata.get("intent_id")
-            
+
             # Normalize RRF score to 0-1 range for display
             max_rrf = max(rrf_scores.values()) if rrf_scores else 1.0
             normalized_score = score / max_rrf if max_rrf > 0 else 0
-            
-            results.append({
-                "document_id": doc.metadata.get("document_id"),
-                "intent_id": doc_intent_id,
-                "content": doc.page_content,
-                "score": normalized_score,
-                "rrf_score": score,
-                "metadata": doc.metadata
-            })
-            logger.debug(f"Added document {doc_idx} with RRF score {score}, normalized {normalized_score:.3f}")
+
+            results.append(
+                {
+                    "document_id": doc.metadata.get("document_id"),
+                    "intent_id": doc_intent_id,
+                    "content": doc.page_content,
+                    "score": normalized_score,
+                    "rrf_score": score,
+                    "metadata": doc.metadata,
+                }
+            )
+            logger.debug(
+                f"Added document {doc_idx} with RRF score {score}, normalized {normalized_score:.3f}"
+            )
 
         logger.info(f"Final search returned {len(results)} results for query '{query}'")
         return results
 
     def delete_document(self, document_id: int) -> bool:
         """
-        Delete all chunks associated with a document
-
-        Note: FAISS doesn't support efficient deletion,
-        so we mark them as deleted in metadata
+        Delete all chunks associated with a document from FAISS and documents list
 
         Args:
             document_id: Database document ID
@@ -317,14 +327,73 @@ class VectorStore:
         Returns:
             True if successful
         """
-        # Update metadata to mark as deleted
-        for doc in self.documents:
+        # 1. 找出要删除的向量索引
+        indices_to_delete = []
+        for i, doc in enumerate(self.documents):
             if doc.metadata.get("document_id") == document_id:
-                doc.metadata["deleted"] = True
+                indices_to_delete.append(i)
 
+        if not indices_to_delete:
+            logger.warning(f"Document {document_id} not found in vector store")
+            return False
+
+        logger.info(
+            f"Deleting document {document_id} with {len(indices_to_delete)} chunks from FAISS"
+        )
+
+        # 2. 从FAISS中删除向量（按索引从后往前删，防止索引偏移）
+        if self.faiss_store and self.faiss_store.index.ntotal > 0:
+            try:
+                # 删除向量
+                for idx in sorted(indices_to_delete, reverse=True):
+                    try:
+                        self.faiss_store.index.remove_ids(np.array([idx]))
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to remove FAISS vector at index {idx}: {e}"
+                        )
+            except Exception as e:
+                logger.warning(f"FAISS remove error, will rebuild index: {e}")
+                # 如果单个删除失败，重建整个索引
+                self._rebuild_from_documents()
+                self._save()
+                return True
+
+        # 3. 从documents列表中移除（从后往前删，防止索引偏移）
+        for idx in sorted(indices_to_delete, reverse=True):
+            self.documents.pop(idx)
+
+        # 4. 重建BM25索引
+        self._build_bm25_index()
+
+        # 5. 保存
         self._save()
-        logger.info(f"Marked document {document_id} as deleted")
+        logger.info(
+            f"Deleted document {document_id} from vector store ({len(indices_to_delete)} chunks)"
+        )
         return True
+
+    def _rebuild_from_documents(self):
+        """Rebuild FAISS index from current documents list"""
+        logger.info("Rebuilding FAISS index from documents...")
+
+        # 重新添加所有文档到FAISS
+        if not self.documents:
+            self.faiss_store = FAISS.from_documents(
+                [Document(page_content="", metadata={})], self.embedding_function
+            )
+            self.faiss_store.index.ntotal = 0
+            return
+
+        texts = [doc.page_content for doc in self.documents]
+        metadatas = [doc.metadata for doc in self.documents]
+
+        # 创建新索引
+        self.faiss_store = FAISS.from_texts(
+            texts, self.embedding_function, metadatas=metadatas
+        )
+        self._build_bm25_index()
+        logger.info(f"Rebuilt FAISS index with {len(self.documents)} documents")
 
 
 # Singleton instance
