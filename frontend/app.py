@@ -1848,7 +1848,7 @@ elif page == "Query":
     )
 
     # Frontend selector
-    frontend = st.selectbox("Query Source", ["web", "whatsapp", "teams"])
+    frontend = st.selectbox("Query Source", ["web", "telegram", "feishu"])
 
     if st.button("🚀 Submit Query", key="btn_submit_query", type="primary"):
         if not query_text.strip():
@@ -2036,11 +2036,12 @@ elif page == "Frontend Integration":
     if error:
         st.error(error)
     else:
-        # WhatsApp Section
+        # Telegram Section (Polling Mode)
         st.markdown(
             """
-        <div style="background: #EFF6FF; padding: 16px; border-radius: 12px; margin-bottom: 16px;">
-            <h3 style="color: #3B82F6; margin: 0;">WhatsApp Business API</h3>
+        <div style="background: #EFF6FF; padding: 16px; border-radius: 12px; margin-bottom: 16px; border-left: 4px solid #229ED9;">
+            <h3 style="color: #229ED9; margin: 0;">Telegram Bot</h3>
+            <p style="color: #64748B; margin: 8px 0 0 0;">使用 Polling 模式接收消息</p>
         </div>
         """,
             unsafe_allow_html=True,
@@ -2049,182 +2050,61 @@ elif page == "Frontend Integration":
         col1, col2 = st.columns(2)
 
         with col1:
-            wa_status = status.get("whatsapp", {})
-            if wa_status.get("configured"):
-                st.success("✅ WhatsApp Configured")
+            telegram_status = status.get("telegram", {})
+            if telegram_status.get("configured"):
+                st.success("✅ Telegram 已配置")
             else:
-                st.warning("⚠️ WhatsApp Not Configured")
+                st.warning("⚠️ Telegram 未配置")
 
         with col2:
-            if wa_status.get("configured"):
-                if st.button("🔄 Test WhatsApp", key="btn_test_wa", type="primary"):
-                    st.info("WhatsApp test functionality available")
-            else:
-                st.info("Configure credentials to enable testing")
-
-        with st.expander("⚙️ Configure WhatsApp Credentials"):
-            wa_phone = st.text_input("Phone Number ID", key="wa_phone")
-            wa_token = st.text_input("Access Token", type="password", key="wa_token")
-
-            if st.button("💾 Save WhatsApp Credentials", key="btn_save_wa"):
-                if wa_phone and wa_token:
-                    result, err = api_request(
-                        "PUT",
-                        "/api/credentials/whatsapp",
-                        json={
-                            "credentials": {
-                                "phone_number_id": wa_phone,
-                                "access_token": wa_token,
-                            }
-                        },
-                    )
-                    if err:
-                        st.error(err)
-                    else:
-                        st.success("WhatsApp credentials saved successfully")
-                        st.rerun()
+            if telegram_status.get("configured"):
+                if telegram_status.get("running"):
+                    st.success("🔴 Bot 运行中")
                 else:
-                    st.error("Please fill in all fields")
+                    st.info("⚪ Bot 未启动 (需要重启服务)")
 
-        st.markdown("---")
-
-        # Teams Section
-        st.markdown(
-            """
-        <div style="background: #F0F9FF; padding: 16px; border-radius: 12px; margin-bottom: 16px;">
-            <h3 style="color: #3B82F6; margin: 0;">Microsoft Teams Bot</h3>
-            <p style="color: #64748B; margin: 8px 0 0 0;">Send Adaptive Cards with RAG-powered responses</p>
-        </div>
-        """,
-            unsafe_allow_html=True,
-        )
-
-        col1, col2 = st.columns(2)
-
-        with col1:
-            teams_status = status.get("teams", {})
-            teams_features = teams_status.get("status", {}).get("features", {})
-            if teams_status.get("configured"):
-                st.success("✅ Teams Configured")
-                if teams_features:
-                    st.caption(
-                        "Features: "
-                        + ", ".join(
-                            [f for f in teams_features.keys() if teams_features.get(f)]
-                        )
-                    )
-            else:
-                st.warning("⚠️ Teams Not Configured")
-
-        with col2:
-            if teams_status.get("configured"):
                 if st.button(
-                    "🔄 Test Teams Connection", key="btn_test_teams", type="primary"
+                    "🔄 测试 Telegram", key="btn_test_telegram", type="primary"
                 ):
-                    result, err = api_request("POST", "/api/test/teams", json={})
+                    result, err = api_request(
+                        "POST", "/api/credentials/telegram/test", json={}
+                    )
                     if err:
                         st.error(f"API error: {err}")
                     elif result and result.get("success"):
-                        st.success(
-                            f"✅ {result.get('message', 'Connection successful')}"
-                        )
-                        if result.get("hint"):
-                            st.info(result.get("hint"))
+                        st.success("✅ Telegram 连接验证通过")
                     else:
                         st.error(
-                            f"❌ {result.get('error', 'Test failed') if result else 'Test failed'}"
+                            f"❌ {result.get('error', '验证失败') if result else '验证失败'}"
                         )
             else:
-                st.info("Configure credentials to enable Teams integration")
+                st.info("请配置 Bot Token")
 
-        with st.expander("📤 Send Test Message to Teams"):
-            st.write("**To send a test message, you need a Conversation ID:**")
-            st.markdown("""
-            1. Open Teams and start a chat with your bot
-            2. Or add the bot to a channel and get the channel's conversation ID
-            3. The format should be like: `19:xxx@thread.tacv2`
-            """)
-
-            conv_id = st.text_input(
-                "Conversation ID",
-                key="teams_conv_id",
-                placeholder="19:xxx@thread.tacv2",
+        with st.expander("⚙️ 配置 Telegram Bot Token"):
+            tg_token = st.text_input(
+                "Bot Token",
+                type="password",
+                key="tg_token_input",
+                placeholder="从 @BotFather 获取的 Token",
             )
 
-            test_message = st.text_input(
-                "Test Message", key="teams_test_msg", value="Hello from IntelliKnow! 🧠"
-            )
-
-            use_card = st.checkbox(
-                "Use Adaptive Card format", value=True, key="teams_use_card"
-            )
-
-            if st.button("📤 Send Test Message", key="btn_send_teams_msg"):
-                if conv_id:
-                    # Validate conversation ID format
-                    if not (
-                        conv_id.startswith("19:") and "@thread" in conv_id
-                    ) and not (len(conv_id) == 36 and conv_id.count("-") == 4):
-                        st.error(
-                            "Invalid Conversation ID format. Expected format: 19:xxx@thread.tacv2"
-                        )
-                    else:
-                        with st.spinner("Sending message..."):
-                            payload = {
-                                "message": test_message,
-                                "conversation_id": conv_id,
-                                "use_card": use_card,
-                            }
-                            result, err = api_request(
-                                "POST", "/api/test/teams", json=payload
-                            )
-                            if err:
-                                st.error(f"API error: {err}")
-                            elif result and result.get("success"):
-                                st.success("✅ Message sent successfully!")
-                            else:
-                                st.error(
-                                    f"❌ {result.get('error', 'Failed to send') if result else 'Failed to send'}"
-                                )
-                else:
-                    st.warning("Please enter a Conversation ID")
-
-        with st.expander("⚙️ Configure Teams Credentials"):
-            st.markdown("""
-            **Setup Instructions:**
-            1. Register an app in Azure AD (Azure Portal → App registrations)
-            2. Enable Teams channel in Bot Channels Registration
-            3. Get App ID, App Password, and Tenant ID from Azure
-            """)
-
-            teams_app_id = st.text_input("App ID (Client ID)", key="teams_app_id")
-            teams_app_pwd = st.text_input(
-                "App Password (Client Secret)", type="password", key="teams_app_pwd"
-            )
-            teams_tenant = st.text_input("Tenant ID", key="teams_tenant")
-
-            if st.button("💾 Save Teams Credentials", key="btn_save_teams"):
-                if teams_app_id and teams_app_pwd and teams_tenant:
+            if st.button("💾 保存 Token", key="btn_save_telegram"):
+                if tg_token:
                     result, err = api_request(
                         "PUT",
-                        "/api/credentials/teams",
-                        json={
-                            "credentials": {
-                                "app_id": teams_app_id,
-                                "app_password": teams_app_pwd,
-                                "tenant_id": teams_tenant,
-                            }
-                        },
+                        "/api/webhook/env/telegram",
+                        json={"token": tg_token},
                     )
                     if err:
-                        st.error(err)
+                        st.error(f"保存失败: {err}")
                     else:
-                        st.success("Teams credentials saved successfully!")
+                        st.success("✅ Token 已保存到 .env 文件，重启服务后生效")
                         st.rerun()
                 else:
-                    st.error(
-                        "Please fill in all fields (App ID, App Password, Tenant ID)"
-                    )
+                    st.error("请输入 Token")
+
+            if st.button("🔄 刷新状态", key="btn_refresh_telegram"):
+                st.rerun()
 
         st.markdown("---")
 
@@ -2282,44 +2162,38 @@ elif page == "Frontend Integration":
                 if feishu_app_id and feishu_app_secret:
                     result, err = api_request(
                         "PUT",
-                        "/api/credentials/feishu",
+                        "/api/webhook/env/feishu",
                         json={
-                            "credentials": {
-                                "app_id": feishu_app_id,
-                                "app_secret": feishu_app_secret,
-                            }
+                            "app_id": feishu_app_id,
+                            "app_secret": feishu_app_secret,
                         },
                     )
                     if err:
-                        st.error(err)
+                        st.error(f"保存失败: {err}")
                     else:
-                        st.success("飞书凭据保存成功")
+                        st.success("✅ 飞书凭据已保存到 .env 文件，重启服务后生效")
                         st.rerun()
                 else:
                     st.error("请填写所有字段")
 
         st.markdown("---")
 
-        # Webhook URLs
+        # Connection Info
         st.markdown(
             """
         <div style="background: #F8FAFC; padding: 16px; border-radius: 12px; margin-top: 16px;">
-            <h4 style="color: #64748B; margin: 0 0 12px 0;">Webhook URLs</h4>
+            <h4 style="color: #64748B; margin: 0 0 12px 0;">连接方式</h4>
         </div>
         """,
             unsafe_allow_html=True,
         )
 
-        col1, col2, col3 = st.columns(3)
+        col1, col2 = st.columns(2)
         with col1:
-            st.code(f"{API_BASE_URL}/api/webhook/whatsapp", language="text")
-            st.caption("WhatsApp Webhook URL")
+            st.info("🤖 **Telegram**: Polling 模式 (长轮询)")
+            st.caption("使用 TELEGRAM_BOT_TOKEN 环境变量配置")
         with col2:
-            st.code(f"{API_BASE_URL}/api/webhook/teams", language="text")
-            st.caption("Teams Bot Webhook URL")
-        with col3:
-            st.code("WebSocket 长连接模式", language="text")
-            st.caption("飞书使用 WebSocket 模式")
+            st.info("📱 **飞书 (Feishu)**: WebSocket 长连接模式")
 
 
 # ============== Analytics Page ==============

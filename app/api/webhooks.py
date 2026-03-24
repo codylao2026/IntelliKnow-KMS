@@ -7,16 +7,18 @@ Provides endpoints for:
 - Feishu (Lark) long connection management
 - Frontend integration status checking
 - Connection testing for each platform
+- Environment variable management for credentials
 """
 
 import logging
 import json
-from fastapi import APIRouter, Request, Response, HTTPException, Depends
+from fastapi import APIRouter, Request, Response, HTTPException, Depends, Body
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from cryptography.fernet import Fernet
 import base64
+from pathlib import Path
 
 from config import settings
 from app.services.frontend.whatsapp import handle_whatsapp_webhook, get_whatsapp_client
@@ -140,22 +142,23 @@ async def get_credential_from_db(db: AsyncSession, frontend_type: str) -> dict |
 @router.get("/status/frontend")
 async def get_frontend_status(db: AsyncSession = Depends(get_db)):
     """Get frontend integration status (FR-003)"""
-    # Check database for saved credentials
+    # Check database for saved credentials (for whatsapp/teams)
     wa_creds = await get_credential_from_db(db, "whatsapp")
     teams_creds = await get_credential_from_db(db, "teams")
-    feishu_creds = await get_credential_from_db(db, "feishu")
 
     whatsapp = get_whatsapp_client()
     teams = get_teams_client()
-    feishu_getter = _try_import_feishu()
-    feishu = feishu_getter() if feishu_getter else None
 
-    # Telegram - get from settings
+    # Telegram - get from settings (env)
     from app.services.frontend.telegram import get_telegram_client
 
     telegram = get_telegram_client()
     telegram_configured = bool(telegram and telegram.is_configured())
     telegram_running = bool(telegram and telegram.is_running())
+
+    # Feishu - get from settings (env)
+    feishu_getter = _try_import_feishu()
+    feishu = feishu_getter() if feishu_getter else None
 
     # Check both database and settings
     wa_configured = (
@@ -164,9 +167,11 @@ async def get_frontend_status(db: AsyncSession = Depends(get_db)):
     teams_configured = (
         teams_creds and teams_creds.get("app_id") and teams_creds.get("app_password")
     ) or (teams.app_id and teams.app_password)
+
+    # Feishu: only check settings (env), not database
     feishu_configured = (
-        feishu_creds and feishu_creds.get("app_id") and feishu_creds.get("app_secret")
-    ) or (feishu.app_id and feishu.app_secret if feishu else False)
+        bool(feishu and feishu.app_id and feishu.app_secret) if feishu else False
+    )
 
     return {
         "whatsapp": {
@@ -184,11 +189,7 @@ async def get_frontend_status(db: AsyncSession = Depends(get_db)):
         },
         "feishu": {
             "configured": bool(feishu_configured),
-            "app_id": (
-                feishu_creds.get("app_id")
-                if feishu_creds
-                else (feishu.app_id if feishu else None)
-            ),
+            "app_id": feishu.app_id if feishu else None,
             "running": feishu.is_running() if feishu else False,
         },
         "telegram": {
@@ -318,3 +319,105 @@ async def test_feishu(db: AsyncSession = Depends(get_db)):
         "running": client.is_running() if client else False,
         "mode": "WebSocket Long Connection",
     }
+
+
+# ============== Environment Variable Endpoints ==============
+
+
+class TelegramTokenRequest(BaseModel):
+    token: str
+
+
+class FeishuCredentialsRequest(BaseModel):
+    app_id: str
+    app_secret: str
+
+
+@router.put("/env/telegram")
+async def save_telegram_token(request: TelegramTokenRequest):
+    """Save Telegram bot token to .env file"""
+    token = request.token
+    if not token:
+        return {"success": False, "error": "Token cannot be empty"}
+
+    env_path = Path(__file__).parent.parent.parent / "config" / ".env"
+
+    try:
+        if env_path.exists():
+            content = env_path.read_text(encoding="utf-8")
+            lines = content.splitlines()
+        else:
+            lines = []
+
+        key_found = False
+        new_lines = []
+        for line in lines:
+            if line.startswith("TELEGRAM_BOT_TOKEN="):
+                new_lines.append(f"TELEGRAM_BOT_TOKEN={token}")
+                key_found = True
+            else:
+                new_lines.append(line)
+
+        if not key_found:
+            new_lines.append(f"TELEGRAM_BOT_TOKEN={token}")
+
+        env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+
+        from dotenv import load_dotenv
+
+        load_dotenv(env_path, override=True)
+
+        return {"success": True, "message": "Telegram token saved to .env file"}
+
+    except Exception as e:
+        logger.error(f"Failed to save telegram token: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@router.put("/env/feishu")
+async def save_feishu_credentials(request: FeishuCredentialsRequest):
+    """Save Feishu credentials to .env file"""
+    app_id = request.app_id
+    app_secret = request.app_secret
+    if not app_id or not app_secret:
+        return {"success": False, "error": "App ID and App Secret are required"}
+
+    env_path = Path(__file__).parent.parent.parent / "config" / ".env"
+
+    try:
+        if env_path.exists():
+            content = env_path.read_text(encoding="utf-8")
+            lines = content.splitlines()
+        else:
+            lines = []
+
+        new_lines = []
+        app_id_found = False
+        app_secret_found = False
+
+        for line in lines:
+            if line.startswith("FEISHU_APP_ID="):
+                new_lines.append(f"FEISHU_APP_ID={app_id}")
+                app_id_found = True
+            elif line.startswith("FEISHU_APP_SECRET="):
+                new_lines.append(f"FEISHU_APP_SECRET={app_secret}")
+                app_secret_found = True
+            else:
+                new_lines.append(line)
+
+        if not app_id_found:
+            new_lines.append(f"FEISHU_APP_ID={app_id}")
+        if not app_secret_found:
+            new_lines.append(f"FEISHU_APP_SECRET={app_secret}")
+
+        env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+
+        from dotenv import load_dotenv
+
+        load_dotenv(env_path, override=True)
+
+        return {"success": True, "message": "Feishu credentials saved to .env file"}
+
+    except Exception as e:
+        logger.error(f"Failed to save feishu credentials: {e}")
+        return {"success": False, "error": str(e)}
