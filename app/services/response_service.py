@@ -344,6 +344,7 @@ async def process_query(
 
         # Step 2: Get all document IDs for this intent from database
         valid_doc_ids = []
+        has_intent_docs = True
         if intent_id is not None:
             try:
                 from sqlalchemy import select
@@ -353,11 +354,43 @@ async def process_query(
                     select(Document.id).where(Document.intent_id == intent_id)
                 )
                 valid_doc_ids = [row[0] for row in result.fetchall()]
+                has_intent_docs = len(valid_doc_ids) > 0
                 logger.info(
                     f"Intent '{intent_name}' has {len(valid_doc_ids)} documents: {valid_doc_ids}"
                 )
             except Exception as e:
                 logger.error(f"Failed to get documents for intent {intent_id}: {e}")
+
+        # If intent has no documents, return early
+        if not has_intent_docs:
+            logger.warning(
+                f"Intent '{intent_name}' has no documents - returning no documents response"
+            )
+            query_log = QueryLog(
+                query=query,
+                intent_name=intent_name,
+                intent_id=intent_id,
+                confidence=0.0,
+                confidence_source="no_documents",
+                response="I couldn't find relevant documents for your query. Please check if the intent space has uploaded documents.",
+                sources=[],
+                frontend=frontend,
+                status="no_intent_documents",
+                response_time=(time.time() - start_time) * 1000,
+            )
+            db.add(query_log)
+            await db.commit()
+
+            return {
+                "query": query,
+                "response": "I couldn't find relevant documents for your query. Please check if the intent space has uploaded documents.",
+                "intent": intent_name,
+                "confidence": 0.0,
+                "confidence_source": "no_documents",
+                "sources": [],
+                "response_time": (time.time() - start_time) * 1000,
+                "status": "no_intent_documents",
+            }
 
         # Step 3: Hybrid search (no intent filter in vectorstore)
         search_results = await search_documents(
@@ -406,30 +439,54 @@ async def process_query(
                 query=query, results=search_results, top_k=settings.RERANK_TOP_K
             )
 
-        # Step 6: Get dynamic confidence threshold and check
+        # Step 6: Calculate answer confidence based on rerank scores (not intent classification)
+        answer_confidence = confidence
+        answer_confidence_source = confidence_source
+
+        if reranked_results:
+            top_score = reranked_results[0].get(
+                "rerank_score", reranked_results[0].get("score", 0)
+            )
+            if top_score >= 0.8:
+                answer_confidence = 0.95
+                answer_confidence_source = "rerank_high"
+            elif top_score >= 0.5:
+                answer_confidence = 0.7
+                answer_confidence_source = "rerank_medium"
+            elif top_score >= 0.3:
+                answer_confidence = 0.5
+                answer_confidence_source = "rerank_low"
+            else:
+                answer_confidence = 0.3
+                answer_confidence_source = "rerank_very_low"
+            logger.info(
+                f"Answer confidence: {answer_confidence:.2f} (top_score={top_score:.3f}, source={answer_confidence_source})"
+            )
+
+        # Step 7: Get dynamic confidence threshold and check
         conf_settings = await get_confidence_settings(db)
         threshold = conf_settings["confidence_threshold"]
 
         # Check confidence threshold
-        if confidence < threshold:
+        if answer_confidence < threshold:
             response_text = "I couldn't find a suitable answer to your question in the knowledge base. Please try rephrasing your question or contact the administrator for assistance."
             sources = []
             status = "low_confidence"
             response_time = (time.time() - start_time) * 1000
         else:
-            # Step 5: Generate response (always returns string since stream=False)
+            # Step 8: Generate response (always returns string since stream=False)
             response_text = await generate_response_from_rag(
                 query=query, contexts=reranked_results, stream=False
             )
             if response_text is None:
                 response_text = ""
 
-            # Step 6: Validate and fix citations to match actual sources
+            # Step 9: Validate and fix citations to match actual sources
             response_text, corrected_sources = validate_and_fix_citations(
                 str(response_text), reranked_results, query
             )
 
-            # Step 7: Format sources (use corrected sources if citations were fixed)
+            # Step 10: Format sources (use corrected sources if citations were fixed)
             sources = format_sources(
                 corrected_sources if corrected_sources else reranked_results
             )
@@ -441,13 +498,13 @@ async def process_query(
             else:
                 status = "success"
 
-        # Step 7: Log query
+        # Step 11: Log query
         query_log = QueryLog(
             query=query,
             intent_name=intent_name,
             intent_id=intent_id,
-            confidence=confidence,
-            confidence_source=confidence_source,
+            confidence=answer_confidence,
+            confidence_source=answer_confidence_source,
             response=response_text,
             sources=[s["document_id"] for s in sources],
             frontend=frontend,
@@ -461,8 +518,8 @@ async def process_query(
             "query": query,
             "response": response_text,
             "intent": intent_name,
-            "confidence": confidence,
-            "confidence_source": confidence_source,
+            "confidence": answer_confidence,
+            "confidence_source": answer_confidence_source,
             "sources": sources,
             "response_time": response_time,
             "status": status,
