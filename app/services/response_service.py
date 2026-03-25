@@ -147,7 +147,14 @@ def validate_and_fix_citations(
 
     # Note: Removed the "LLM said not found but had contexts - replace with KB content" logic
     # This caused poor quality answers by concatenating raw chunks without proper synthesis
-    # Now LLM's response is used directly - if it can't answer, it will say so
+
+    # Check if LLM says it couldn't find info - lower confidence if so
+    llm_not_found = False
+    if llm_says_not_found:
+        logger.info("LLM indicated not found - will adjust confidence")
+        llm_not_found = True
+
+    return response, None  # Return tuple (response, corrected_sources)
 
     # Remove citation patterns
     patterns_to_remove = [
@@ -510,15 +517,27 @@ async def process_query(
             if response_text is None:
                 response_text = ""
 
-            # Step 9: Validate and fix citations to match actual sources
-            response_text, corrected_sources = validate_and_fix_citations(
+            # Step 9: Validate and fix citations, check if LLM couldn't answer
+            response_text, _ = validate_and_fix_citations(
                 str(response_text), reranked_results, query
             )
 
-            # Step 10: Format sources (use corrected sources if citations were fixed)
-            sources = format_sources(
-                corrected_sources if corrected_sources else reranked_results
+            # Check if LLM couldn't answer - lower confidence
+            llm_not_found = (
+                "could not find" in response_text.lower()
+                or "no relevant" in response_text.lower()
             )
+
+            # If LLM said not found, override confidence
+            if llm_not_found:
+                answer_confidence = 0.3
+                answer_confidence_source = "llm_not_found"
+                logger.info(
+                    f"LLM couldn't answer - set confidence to {answer_confidence}"
+                )
+
+            # Step 10: Format sources (use corrected sources if citations were fixed)
+            sources = format_sources(reranked_results)
             response_time = (time.time() - start_time) * 1000
             status = "success"
 
@@ -819,9 +838,21 @@ async def process_query_streaming(
             yield f"data: {json.dumps({'event': 'token', 'data': {'token': token}})}\n\n"
 
         # Validate and fix citations to match actual sources
-        full_response, corrected_sources = validate_and_fix_citations(
+        full_response, _ = validate_and_fix_citations(
             full_response, reranked_results, query
         )
+
+        # Check if LLM couldn't answer - lower confidence
+        llm_not_found = (
+            "could not find" in full_response.lower()
+            or "no relevant" in full_response.lower()
+        )
+
+        # If LLM said not found, override confidence
+        if llm_not_found:
+            answer_confidence = 0.3
+            answer_confidence_source = "llm_not_found"
+            logger.info(f"LLM couldn't answer - set confidence to {answer_confidence}")
 
         # Update sources if citations were fixed
         if corrected_sources:
