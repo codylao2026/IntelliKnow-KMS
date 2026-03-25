@@ -526,62 +526,9 @@ elif page == "KB Management":
                             st.write(format_status(status))
 
                     with row_cols[7]:
-                        col_action1, col_action2 = st.columns(2)
-                        with col_action1:
-                            if st.button("👁️", key=f"view_{doc_id}"):
-                                st.session_state.view_doc_id = doc_id
-                                st.rerun()
-                        with col_action2:
-                            if st.button("🔄", key=f"update_{doc_id}"):
-                                st.session_state.update_doc_id = doc_id
-                                st.rerun()
-                                st.write(f"Re-upload for: **{d['name']}**")
-                                update_file = st.file_uploader(
-                                    "Choose new file",
-                                    type=["pdf", "docx"],
-                                    key=f"update_file_{doc_id}",
-                                )
-                                if update_file is not None:
-                                    st.info(f"Selected: {update_file.name}")
-                                    if st.button(
-                                        "📤 Upload", key=f"do_update_{doc_id}"
-                                    ):
-                                        # Delete old and upload new
-                                        delete_result, del_err = api_request(
-                                            "DELETE", f"/api/documents/{doc_id}"
-                                        )
-                                        if del_err:
-                                            st.error(f"Delete failed: {del_err}")
-                                        else:
-                                            # Upload new file
-                                            intent_id = d.get("intent_id")
-                                            files_data = [
-                                                (
-                                                    "files",
-                                                    (
-                                                        update_file.name,
-                                                        update_file.getvalue(),
-                                                    ),
-                                                )
-                                            ]
-                                            data = (
-                                                {"intent_id": intent_id}
-                                                if intent_id
-                                                else {}
-                                            )
-                                            result, err = api_request(
-                                                "POST",
-                                                "/api/documents/upload-batch",
-                                                files=files_data,
-                                                data=data,
-                                            )
-                                            if err:
-                                                st.error(f"Upload failed: {err}")
-                                            else:
-                                                st.success(
-                                                    "✅ Document updated successfully!"
-                                                )
-                                                st.rerun()
+                        if st.button("👁️ View", key=f"view_{doc_id}"):
+                            st.session_state.view_doc_id = doc_id
+                            st.rerun()
 
                 st.markdown("---")
 
