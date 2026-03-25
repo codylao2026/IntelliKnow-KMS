@@ -256,10 +256,10 @@ def format_sources(contexts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         doc_id = ctx.get("document_id")
         if doc_id and doc_id not in seen_ids:
             # Get score - prefer rerank_score, then score
-            score = ctx.get("rerank_score", ctx.get("score", 0))
+            score = ctx.get("rerank_score", ctx.get("score"))
 
-            # Skip documents with zero/negative score (not relevant)
-            if score <= 0:
+            # Skip documents with no/zero/negative score (not relevant)
+            if not score or score <= 0:
                 continue
 
             seen_ids.add(doc_id)
