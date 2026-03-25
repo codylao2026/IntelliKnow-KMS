@@ -614,6 +614,7 @@ async def process_query_streaming(
         yield f"data: {json.dumps({'event': 'search', 'data': {'status': 'getting_documents'}})}\n\n"
 
         valid_doc_ids = []
+        has_intent_docs = False  # Default to False
         if intent_id is not None:
             try:
                 from sqlalchemy import select
@@ -623,11 +624,45 @@ async def process_query_streaming(
                     select(Document.id).where(Document.intent_id == intent_id)
                 )
                 valid_doc_ids = [row[0] for row in result.fetchall()]
+                has_intent_docs = len(valid_doc_ids) > 0
                 logger.info(
                     f"Intent '{intent_name}' has {len(valid_doc_ids)} documents: {valid_doc_ids}"
                 )
             except Exception as e:
                 logger.error(f"Failed to get documents for intent {intent_id}: {e}")
+
+        # If intent has no documents, return early
+        if not has_intent_docs:
+            logger.warning("=== INTENT HAS NO DOCUMENTS (streaming) ===")
+            response_text = "I couldn't find relevant documents for your query. Please check if the intent space has uploaded documents."
+            response_time = (time.time() - start_time) * 1000
+
+            yield f"data: {json.dumps({'event': 'search', 'data': {'count': 0}})}\n\n"
+            yield f"data: {json.dumps({'event': 'done', 'data': {
+                'response': response_text,
+                'intent': intent_name,
+                'confidence': 0.0,
+                'confidence_source': 'no_documents',
+                'sources': [],
+                'status': 'no_intent_documents',
+                'response_time': response_time
+            })}\n\n"
+
+            query_log = QueryLog(
+                query=query,
+                intent_name=intent_name,
+                intent_id=intent_id,
+                confidence=0.0,
+                confidence_source="no_documents",
+                response=response_text,
+                sources=[],
+                frontend=frontend,
+                status="no_intent_documents",
+                response_time=response_time,
+            )
+            db.add(query_log)
+            await db.commit()
+            return
 
         # Step 3: Hybrid search (no intent filter in vectorstore)
         yield f"data: {json.dumps({'event': 'search', 'data': {'status': 'searching'}})}\n\n"
@@ -641,11 +676,6 @@ async def process_query_streaming(
         # Step 4: Filter by document_id (only return chunks from valid intent documents)
         if valid_doc_ids:
             original_count = len(search_results)
-            # DEBUG: Show all search results' document_ids
-            all_doc_ids = [r.get("document_id") for r in search_results]
-            logger.info(f"DEBUG: Search results doc_ids: {all_doc_ids}")
-            logger.info(f"DEBUG: Valid doc_ids for intent {intent_id}: {valid_doc_ids}")
-
             search_results = [
                 r for r in search_results if r.get("document_id") in valid_doc_ids
             ]
@@ -653,9 +683,42 @@ async def process_query_streaming(
                 f"Filtered from {original_count} to {len(search_results)} results for intent {intent_id}"
             )
 
+        # If filtered to 0, return no results
+        if not search_results:
+            logger.warning("=== NO RESULTS AFTER FILTER (streaming) ===")
+            response_text = "I couldn't find relevant documents for your query."
+            response_time = (time.time() - start_time) * 1000
+
+            yield f"data: {json.dumps({'event': 'search', 'data': {'count': 0}})}\n\n"
+            yield f"data: {json.dumps({'event': 'done', 'data': {
+                'response': response_text,
+                'intent': intent_name,
+                'confidence': 0.0,
+                'confidence_source': 'no_results',
+                'sources': [],
+                'status': 'no_results',
+                'response_time': response_time
+            })}\n\n"
+
+            query_log = QueryLog(
+                query=query,
+                intent_name=intent_name,
+                intent_id=intent_id,
+                confidence=0.0,
+                confidence_source="no_results",
+                response=response_text,
+                sources=[],
+                frontend=frontend,
+                status="no_results",
+                response_time=response_time,
+            )
+            db.add(query_log)
+            await db.commit()
+            return
+
         yield f"data: {json.dumps({'event': 'search', 'data': {'count': len(search_results)}})}\n\n"
 
-        # Step 5: Rerank if we have results (always rerank regardless of confidence)
+        # Step 5: Rerank if we have results
         if len(search_results) <= 2:
             reranked_results = search_results[: settings.RERANK_TOP_K]
             yield f"data: {json.dumps({'event': 'rerank', 'data': {'status': 'skipped', 'reason': 'few_results'}})}\n\n"
@@ -665,25 +728,54 @@ async def process_query_streaming(
                 query=query, results=search_results, top_k=settings.RERANK_TOP_K
             )
 
-        # Step 6: Check confidence threshold
+        # Step 6: Calculate answer confidence based on rerank scores
+        answer_confidence = 0.3
+        answer_confidence_source = "default"
+
+        if reranked_results:
+            top_score = reranked_results[0].get(
+                "rerank_score", reranked_results[0].get("score", 0)
+            )
+            if top_score >= 0.8:
+                answer_confidence = 0.95
+                answer_confidence_source = "high"
+            elif top_score >= 0.5:
+                answer_confidence = 0.7
+                answer_confidence_source = "medium"
+            elif top_score >= 0.3:
+                answer_confidence = 0.5
+                answer_confidence_source = "low"
+            else:
+                answer_confidence = 0.3
+                answer_confidence_source = "very_low"
+            logger.info(f"Answer confidence: {answer_confidence:.2f} (top_score={top_score:.3f})")
+
+        # Step 7: Check confidence threshold
         conf_settings = await get_confidence_settings(db)
         threshold = conf_settings["confidence_threshold"]
 
-        if confidence < threshold:
+        if answer_confidence < threshold:
             response_text = "I couldn't find a suitable answer to your question in the knowledge base. Please try rephrasing your question or contact the administrator for assistance."
             sources = []
             status = "low_confidence"
             response_time = (time.time() - start_time) * 1000
 
-            yield f"data: {json.dumps({'event': 'done', 'data': {'response': response_text, 'status': status, 'response_time': response_time}})}\n\n"
+            yield f"data: {json.dumps({'event': 'done', 'data': {
+                'response': response_text,
+                'intent': intent_name,
+                'confidence': answer_confidence,
+                'confidence_source': answer_confidence_source,
+                'sources': sources,
+                'status': status,
+                'response_time': response_time
+            })}\n\n"
 
-            # Log query
             query_log = QueryLog(
                 query=query,
                 intent_name=intent_name,
                 intent_id=intent_id,
-                confidence=confidence,
-                confidence_source=confidence_source,
+                confidence=answer_confidence,
+                confidence_source=answer_confidence_source,
                 response=response_text,
                 sources=[],
                 frontend=frontend,
@@ -694,7 +786,7 @@ async def process_query_streaming(
             await db.commit()
             return
 
-        # Step 7: Stream response
+        # Step 8: Stream response
         yield f"data: {json.dumps({'event': 'response', 'data': {'status': 'generating'}})}\n\n"
 
         sources = format_sources(reranked_results)
@@ -723,15 +815,23 @@ async def process_query_streaming(
 
         response_time = (time.time() - start_time) * 1000
 
-        yield f"data: {json.dumps({'event': 'done', 'data': {'response': full_response, 'sources': sources, 'response_time': response_time, 'status': 'success'}})}\n\n"
+        yield f"data: {json.dumps({'event': 'done', 'data': {
+            'response': full_response,
+            'intent': intent_name,
+            'confidence': answer_confidence,
+            'confidence_source': answer_confidence_source,
+            'sources': sources,
+            'response_time': response_time,
+            'status': 'success'
+        })}\n\n"
 
         # Log query
         query_log = QueryLog(
             query=query,
             intent_name=intent_name,
             intent_id=intent_id,
-            confidence=confidence,
-            confidence_source=confidence_source,
+            confidence=answer_confidence,
+            confidence_source=answer_confidence_source,
             response=full_response,
             sources=[s["document_id"] for s in sources],
             frontend=frontend,
@@ -742,5 +842,5 @@ async def process_query_streaming(
         await db.commit()
 
     except Exception as e:
-        logger.error(f"Streaming query processing error: {e}")
+        logger.error(f"Streaming query processing error: {e}", exc_info=True)
         yield f"data: {json.dumps({'event': 'error', 'data': {'message': 'An error occurred while processing your query.'}})}\n\n"
