@@ -288,4 +288,4 @@ Only return JSON, no other content."""
 
     except Exception as e:
         logger.error(f"Intent classification error: {e}", exc_info=True)
-        return {"intent": settings.FALLBACK_INTENT, "confidence": 0.5}
+        return {"intent": settings.FALLBACK_INTENT, "confidence": 0.0, "error": str(e)}
