@@ -364,9 +364,55 @@ async def process_query(
                 logger.error(f"Failed to get documents for intent {intent_id}: {e}")
 
         # If intent has no documents, return early (only if query succeeded)
+        # Note: If search happens and finds results, we'll filter by intent docs
         if intent_doc_query_error is None and not has_intent_docs:
-            logger.warning(
-                f"Intent '{intent_name}' has no documents - returning no documents response"
+            # First do search to see if there are any relevant docs
+            search_results = await search_documents(
+                query=query,
+                intent_id=None,
+                top_k=REDUCED_TOP_K,
+            )
+
+            # Filter by document_id (only return chunks from valid intent documents)
+            if valid_doc_ids:
+                search_results = [
+                    r for r in search_results if r.get("document_id") in valid_doc_ids
+                ]
+
+            # If no search results for this intent, return no docs message
+            if not search_results:
+                logger.warning(
+                    f"Intent '{intent_name}' has no documents and no search results - returning no documents response"
+                )
+                query_log = QueryLog(
+                    query=query,
+                    intent_name=intent_name,
+                    intent_id=intent_id,
+                    confidence=0.0,
+                    confidence_source="no_documents",
+                    response="I couldn't find relevant documents for your query. Please check if the intent space has uploaded documents.",
+                    sources=[],
+                    frontend=frontend,
+                    status="no_intent_documents",
+                    response_time=(time.time() - start_time) * 1000,
+                )
+                db.add(query_log)
+                await db.commit()
+
+                return {
+                    "query": query,
+                    "response": "I couldn't find relevant documents for your query. Please check if the intent space has uploaded documents.",
+                    "intent": intent_name,
+                    "confidence": 0.0,
+                    "confidence_source": "no_documents",
+                    "sources": [],
+                    "response_time": (time.time() - start_time) * 1000,
+                    "status": "no_intent_documents",
+                }
+
+            # If search found results from other intents, use them but with low confidence
+            logger.info(
+                f"Intent '{intent_name}' has no docs but search found {len(search_results)} results from other intents - using with low confidence"
             )
             query_log = QueryLog(
                 query=query,
