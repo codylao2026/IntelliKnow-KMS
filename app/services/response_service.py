@@ -345,6 +345,7 @@ async def process_query(
         # Step 2: Get all document IDs for this intent from database
         valid_doc_ids = []
         has_intent_docs = True
+        intent_doc_query_error = None
         if intent_id is not None:
             try:
                 from sqlalchemy import select
@@ -356,13 +357,14 @@ async def process_query(
                 valid_doc_ids = [row[0] for row in result.fetchall()]
                 has_intent_docs = len(valid_doc_ids) > 0
                 logger.info(
-                    f"Intent '{intent_name}' has {len(valid_doc_ids)} documents: {valid_doc_ids}"
+                    f"Intent '{intent_name}' (id={intent_id}) has {len(valid_doc_ids)} documents: {valid_doc_ids}"
                 )
             except Exception as e:
+                intent_doc_query_error = str(e)
                 logger.error(f"Failed to get documents for intent {intent_id}: {e}")
 
-        # If intent has no documents, return early
-        if not has_intent_docs:
+        # If intent has no documents, return early (only if query succeeded)
+        if intent_doc_query_error is None and not has_intent_docs:
             logger.warning(
                 f"Intent '{intent_name}' has no documents - returning no documents response"
             )
