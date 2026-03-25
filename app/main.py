@@ -33,14 +33,14 @@ async def lifespan(app: FastAPI):
     await init_db()
     logger.info("Database initialized")
 
-    # Initialize Feishu client after FastAPI is ready (use await)
+    # Initialize Feishu client after FastAPI is ready
     try:
         from app.services.frontend.feishu import get_feishu_client
 
         feishu = get_feishu_client()
         if feishu.app_id and feishu.app_secret:
-            await feishu.start_async()
-            logger.info("Feishu client started")
+            feishu._run_ws_client()
+            logger.info("✅ Feishu 服务已启动")
         else:
             logger.info("Feishu not configured")
     except Exception as e:
@@ -55,7 +55,7 @@ async def lifespan(app: FastAPI):
             import threading
             thread = threading.Thread(target=telegram.start, daemon=True)
             thread.start()
-            logger.info("Telegram client started")
+            logger.info("✅ Telegram 服务已启动")
         else:
             logger.info("Telegram not configured")
     except Exception as e:

@@ -1,6 +1,6 @@
 """
-飞书（ Lark ）Bot 集成 - 长连接模式
-修复：SDK API + WebSocket心跳 + 自动重连 + FAISS初始化
+Feishu (Lark) Bot Integration - Long Connection Mode
+Features: SDK API + WebSocket heartbeat + Auto-reconnect + FAISS initialization
 """
 
 import asyncio
@@ -13,16 +13,11 @@ import random
 from typing import Optional, Dict, Any, List
 from pathlib import Path
 
-try:
-    import lark_oapi as lark
-    from lark_oapi import LogLevel as LarkLogLevel
-
-    LARK_SDK_AVAILABLE = True
-except ImportError:
-    LARK_SDK_AVAILABLE = False
-    logging.warning("lark_oapi not installed. Install with: pip install lark-oapi")
-
 from config import settings
+
+LARK_SDK_AVAILABLE = False
+lark = None
+LarkLogLevel = None
 
 FAISS_INDEX_DIR = Path(settings.FAISS_INDEX_DIR or "./data/vectors/faiss_index")
 FAISS_INDEX_DIR.mkdir(parents=True, exist_ok=True)
@@ -37,8 +32,28 @@ if not _pkl_file.exists():
 logger = logging.getLogger(__name__)
 
 
+def _ensure_lark_sdk():
+    """Lazy load Feishu SDK"""
+    global LARK_SDK_AVAILABLE, lark, LarkLogLevel
+    if LARK_SDK_AVAILABLE:
+        return True
+    
+    try:
+        import lark_oapi as _lark
+        from lark_oapi import LogLevel as _LarkLogLevel
+        global lark, LarkLogLevel
+        lark = _lark
+        LarkLogLevel = _LarkLogLevel
+        LARK_SDK_AVAILABLE = True
+        logger.info("Feishu SDK loaded successfully")
+        return True
+    except ImportError:
+        logger.warning("lark_oapi not installed. Install with: pip install lark-oapi")
+        return False
+
+
 class FeishuClient:
-    """飞书长连接客户端 - 带心跳和自动重连"""
+    """Feishu long-connection client with heartbeat and auto-reconnect"""
 
     def __init__(self):
         self.app_id = settings.FEISHU_APP_ID
@@ -55,13 +70,10 @@ class FeishuClient:
 
         if not self.app_id or not self.app_secret:
             logger.warning("Feishu credentials not configured")
-            return
 
+    def _get_log_level(self):
         if not LARK_SDK_AVAILABLE:
-            logger.error("lark_oapi SDK not available")
-            return
-
-    def _get_log_level(self) -> LarkLogLevel:
+            return None
         level_map = {
             "DEBUG": LarkLogLevel.DEBUG,
             "INFO": LarkLogLevel.INFO,
@@ -71,7 +83,7 @@ class FeishuClient:
         return level_map.get(settings.FEISHU_LOG_LEVEL.upper(), LarkLogLevel.INFO)
 
     def _create_client(self):
-        """创建飞书客户端"""
+        """Create Feishu HTTP client"""
         return (
             lark.Client.builder()
             .app_id(self.app_id)
@@ -81,11 +93,13 @@ class FeishuClient:
         )
 
     def _parse_message(
-        self, data: lark.im.v1.P2ImMessageReceiveV1
+        self, data
     ) -> Optional[Dict[str, Any]]:
-        """解析飞书消息事件"""
+        """Parse Feishu message event"""
         try:
-            msg = data.event.message
+            event = data.event
+            msg = event.message
+            
             if not msg:
                 return None
 
@@ -95,19 +109,22 @@ class FeishuClient:
             content = getattr(msg, "content", "") or ""
             chat_type = getattr(msg, "chat_type", "") or ""
 
+            logger.info(f"Raw message_id: {message_id}, content: {content[:100] if content else ''}")
+
             text_content = ""
-            if message_type == "text":
+            if message_type == "text" and content:
                 try:
                     content_data = json.loads(content)
                     text_content = content_data.get("text", "").strip()
-                except Exception:
+                except json.JSONDecodeError:
+                    logger.error(f"JSON parse failed: {content}")
                     text_content = content.strip()
             elif message_type == "post":
                 text_content = "[Rich text message]"
             elif message_type == "image":
                 text_content = "[Image received]"
             else:
-                text_content = content.strip()
+                text_content = content.strip() if content else ""
 
             user_id = ""
             sender_name = ""
@@ -139,7 +156,7 @@ class FeishuClient:
                 text_content = text_content.replace(f"@{self.bot_name}", "").strip()
 
             logger.info(
-                f"Parsed message - user: {sender_name}, content: {text_content[:50]}"
+                f"Parsed message - message_id: {message_id}, user: {sender_name}, text: {text_content[:50]}"
             )
             return {
                 "message_id": message_id,
@@ -161,7 +178,7 @@ class FeishuClient:
             return None
 
     async def _async_process_message(self, parsed: Dict[str, Any]) -> Dict[str, Any]:
-        """异步处理消息"""
+        """Async process message with RAG"""
         user_message = parsed["text"]
         user_id = parsed.get("user_id", "")
         is_group = parsed.get("is_group", False)
@@ -184,20 +201,20 @@ class FeishuClient:
                     query=user_message, db=db, frontend="feishu"
                 )
 
-            response_text = result.get("response", "抱歉，我暂时无法处理您的请求。")
+            response_text = result.get("response", "Sorry, I cannot process your request at the moment.")
             sources = result.get("sources", [])
             return {"response": response_text, "sources": sources}
 
         except ImportError as e:
             logger.error(f"RAG module import error: {e}")
-            return {"response": "RAG服务未配置，请联系管理员", "sources": []}
+            return {"response": "RAG service not configured, please contact admin", "sources": []}
         except Exception as e:
             logger.error(f"RAG process error: {e}")
             logger.error(f"Traceback: {traceback.format_exc()}")
-            return {"response": "处理您的请求时发生错误，请稍后重试。", "sources": []}
+            return {"response": "An error occurred while processing your request, please try again later.", "sources": []}
 
     def _process_message(self, parsed: Dict[str, Any]) -> Dict[str, Any]:
-        """在线程中运行异步处理"""
+        """Run async processing in thread"""
         result_holder: List[Any] = [None]
         exception_holder: List[Any] = [None]
 
@@ -214,17 +231,17 @@ class FeishuClient:
         thread.join(timeout=30)
 
         if exception_holder[0]:
-            return {"response": "处理请求失败，请稍后重试", "sources": []}
+            return {"response": "Request failed, please try again later", "sources": []}
         if result_holder[0]:
             return result_holder[0]
-        return {"response": "处理超时，请稍后重试", "sources": []}
+        return {"response": "Request timeout, please try again later", "sources": []}
 
     def _build_interactive_card(self, response_text: str, sources: List[Dict]) -> Dict:
-        """构建飞书交互卡片"""
+        """Build Feishu interactive card"""
         max_card_text_len = 4000
         if len(response_text) > max_card_text_len:
             response_text = (
-                response_text[:max_card_text_len] + "\n\n[内容过长已截断...]"
+                response_text[:max_card_text_len] + "\n\n[Content truncated due to length...]"
             )
 
         card_elements = [
@@ -234,7 +251,7 @@ class FeishuClient:
         if sources:
             source_texts = []
             for i, source in enumerate(sources[:5], 1):
-                doc_name = source.get("document_name", "文档")
+                doc_name = source.get("document_name", "Document")
                 source_texts.append(f"**{i}.** {doc_name}")
 
             if source_texts:
@@ -242,7 +259,7 @@ class FeishuClient:
                 card_elements.append(
                     {
                         "tag": "markdown",
-                        "content": "**📚 参考来源:**\n" + "\n".join(source_texts),
+                        "content": "**📚 Sources:**\n" + "\n".join(source_texts),
                     }
                 )
 
@@ -254,7 +271,7 @@ class FeishuClient:
     def _send_message(
         self, message_id: str, msg_type: str, content: str, reply_in_thread: bool = True
     ) -> bool:
-        """通用发送消息方法"""
+        """Generic message sending method"""
         if not message_id or not content:
             logger.warning("Empty message_id or content")
             return False
@@ -299,17 +316,17 @@ class FeishuClient:
             return False
 
     def _send_reply_text(self, message_id: str, text: str) -> bool:
-        """发送纯文本回复"""
+        """Send plain text reply"""
         return self._send_message(message_id, "text", json.dumps({"text": text}))
 
     def _send_reply_card(self, message_id: str, card: Dict) -> bool:
-        """发送交互卡片回复"""
+        """Send interactive card reply"""
         return self._send_message(message_id, "interactive", json.dumps(card))
 
     def _send_reply(
         self, message_id: str, response_text: str, sources: List[Dict]
     ) -> bool:
-        """发送回复消息（优先卡片，降级文本）"""
+        """Send reply (card first, fallback to text)"""
         if not response_text:
             return False
 
@@ -319,15 +336,15 @@ class FeishuClient:
 
         fallback_text = response_text
         if sources:
-            fallback_text += "\n\n📚 参考来源:\n"
+            fallback_text += "\n\n📚 Sources:\n"
             for i, source in enumerate(sources[:3], 1):
-                doc_name = source.get("document_name", "文档")
+                doc_name = source.get("document_name", "Document")
                 fallback_text += f"{i}. {doc_name}\n"
 
         return self._send_reply_text(message_id, fallback_text)
 
     def _heartbeat(self):
-        """心跳保活"""
+        """Heartbeat to keep connection alive"""
         while self._running:
             time.sleep(self._heartbeat_interval)
             if self._running and self.ws_client:
@@ -337,30 +354,41 @@ class FeishuClient:
                     logger.warning(f"Heartbeat error: {e}")
 
     def do_p2_im_message_receive_v1(
-        self, data: lark.im.v1.P2ImMessageReceiveV1
+        self, data
     ) -> None:
-        """处理接收到的消息事件"""
+        """Handle received message event"""
+        print(f"[FISHU CALLBACK] Received data: {type(data)}")
         logger.info(f"[Feishu] Message received - data type: {type(data)}")
-        logger.info(f"[Feishu] Raw data: {data}")
         
-        if not hasattr(data, 'event') or not data.event:
-            logger.warning(f"[Feishu] No event in data: {dir(data)}")
-            return
+        try:
+            event = data.event
+            message = event.message
+            message_id = getattr(message, "message_id", "") or ""
+            message_type = getattr(message, "message_type", "text") or "text"
+            content = getattr(message, "content", "") or ""
+            
+            logger.info(f"[Feishu] message_id: {message_id}, type: {message_type}")
+            logger.info(f"[Feishu] content: {content[:100] if content else 'empty'}")
+        except Exception as e:
+            logger.error(f"[Feishu] Debug info error: {e}")
 
         parsed = self._parse_message(data)
         if not parsed:
+            logger.warning("[Feishu] Failed to parse message")
             return
 
         message_type = parsed.get("message_type", "")
         message_id = parsed.get("message_id", "")
         user_text = parsed.get("text", "").strip()
 
+        logger.info(f"[Feishu] Parsed - message_id: {message_id}, text: {user_text[:50]}")
+
         if message_type == "image":
-            self._send_reply_text(message_id, "收到了图片消息！我目前只支持文本问答。")
+            self._send_reply_text(message_id, "Image received! I currently only support text queries.")
             return
 
         if not user_text:
-            self._send_reply_text(message_id, "收到了空消息，请发送具体的文字问题。")
+            self._send_reply_text(message_id, "Empty message received. Please send a text question.")
             return
 
         result = self._process_message(parsed)
@@ -372,86 +400,51 @@ class FeishuClient:
                 message_id=message_id, response_text=response_text, sources=sources
             )
 
-    def _run_ws_client(self):
-        """后台线程运行WebSocket客户端"""
-        import asyncio
-        import concurrent.futures
-
-        logger.info("=== Feishu WS Client thread starting ===")
-
-        # 使用 ThreadPoolExecutor 创建独立的 event loop
-        loop = None
+    def _worker(self):
+        """Run in separate thread - following official docs"""
+        # Ensure SDK is loaded in this thread
+        if not _ensure_lark_sdk():
+            logger.error("[Feishu] Failed to load SDK")
+            return
+            
         try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                def run_in_new_loop():
-                    # 创建全新的 event loop
-                    new_loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(new_loop)
-                    
-                    try:
-                        self._ws_connection_loop(new_loop)
-                    finally:
-                        new_loop.close()
-                
-                future = executor.submit(run_in_new_loop)
-                future.result()  # 等待完成
-                
+            logger.info("[Feishu] Creating event handler...")
+            event_handler = (
+                lark.EventDispatcherHandler.builder(self.app_id, self.app_secret)
+                .register_p2_im_message_receive_v1(self.do_p2_im_message_receive_v1)
+                .build()
+            )
+            logger.info("[Feishu] Event handler created")
+            
+            ws = lark.ws.Client(
+                self.app_id,
+                self.app_secret,
+                event_handler=event_handler,
+            )
+            
+            self._running = True
+            logger.info("[Feishu] Starting WebSocket client...")
+            ws.start()
+            
+            # Keep thread alive like docs
+            while self._running:
+                time.sleep(1)
+            
         except Exception as e:
-            logger.error(f"Feishu WS thread error: {e}")
+            logger.error(f"[Feishu] Worker error: {e}")
             import traceback
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            self._running = False
+            logger.error(traceback.format_exc())
 
-    def _ws_connection_loop(self, loop: asyncio.AbstractEventLoop):
-        """WebSocket 连接循环 - 在指定的 event loop 中运行"""
-        import asyncio
-        
-        logger.info(f"Starting WebSocket connection loop in new event loop...")
-        
-        while self._running and self._reconnect_count < self._max_reconnects:
-            try:
-                logger.info(f"Creating event handler (attempt {self._reconnect_count + 1})...")
-                
-                event_handler = (
-                    lark.EventDispatcherHandler.builder(self.app_id, self.app_secret)
-                    .register_p2_im_message_receive_v1(self.do_p2_im_message_receive_v1)
-                    .build()
-                )
-                
-                ws_client = lark.ws.Client(
-                    self.app_id,
-                    self.app_secret,
-                    event_handler=event_handler,
-                    log_level=self._get_log_level(),
-                )
-                
-                logger.info("Starting WebSocket client in async mode...")
-                
-                # 使用 asyncio.run 在新 loop 中运行
-                asyncio.run(ws_client.start())
-                
-                logger.info("WebSocket disconnected, will retry...")
-                self._reconnect_count += 1
-                
-            except Exception as e:
-                logger.error(f"WebSocket error: {e}")
-                import traceback
-                logger.error(f"Traceback: {traceback.format_exc()}")
-                self._reconnect_count += 1
-                
-                if self._reconnect_count < self._max_reconnects:
-                    delay = min(60, 2 ** self._reconnect_count)
-                    logger.info(f"Reconnecting in {delay}s...")
-                    time.sleep(delay)
-                else:
-                    logger.error("Max reconnect attempts reached")
-                    break
-        
-        logger.info("WebSocket connection loop ended")
+    def _run_ws_client(self):
+        """Start Feishu WebSocket"""
+        logger.info("Starting Feishu WebSocket...")
+        t = threading.Thread(target=self._worker, daemon=False)
+        t.start()
+        logger.info("Feishu service started")
 
     def start(self) -> bool:
-        """启动飞书客户端（长连接模式）- 同步版本"""
-        if not LARK_SDK_AVAILABLE:
+        """Start Feishu client (long connection mode) - sync version"""
+        if not _ensure_lark_sdk():
             logger.error("lark_oapi SDK not installed")
             return False
 
@@ -469,8 +462,8 @@ class FeishuClient:
         return True
 
     async def start_async(self) -> bool:
-        """启动飞书客户端（异步版本）- 用于FastAPI lifespan"""
-        if not LARK_SDK_AVAILABLE:
+        """Start Feishu client (async version) - for FastAPI lifespan"""
+        if not _ensure_lark_sdk():
             logger.error("lark_oapi SDK not installed")
             return False
 
@@ -482,18 +475,12 @@ class FeishuClient:
             logger.info("Feishu client already running")
             return True
 
-        # 直接启动线程
-        import threading
-        self._running = True
-        
-        thread = threading.Thread(target=self._run_ws_client, daemon=True)
-        thread.start()
-        
-        logger.info("Feishu background thread started")
+        # Call _run_ws_client directly to start thread
+        self._run_ws_client()
         return True
 
     def stop(self):
-        """停止飞书客户端"""
+        """Stop Feishu client"""
         if not self._running:
             logger.info("Feishu client not running")
             return

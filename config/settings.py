@@ -75,6 +75,7 @@ DEFAULT_INTENTS = [
             "insurance",
             "onboarding",
             "offboarding",
+            "recruitment",
         ],
     },
     {

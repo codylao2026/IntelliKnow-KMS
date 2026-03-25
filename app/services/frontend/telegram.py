@@ -2,18 +2,22 @@
 Telegram Bot Integration - Polling Mode
 """
 
+# --------------------------
+# 强制修复 Telegram SSL 问题（必须放最前面）
+# --------------------------
+import ssl
+ssl._create_default_https_context = ssl._create_unverified_context
+
+import urllib3
+urllib3.disable_warnings()
+
 import asyncio
 import logging
 import time
 import threading
 import json
 import requests
-from urllib3.exceptions import InsecureRequestWarning
 from typing import Optional, Dict, Any, List
-
-import warnings
-
-warnings.filterwarnings("ignore", category=InsecureRequestWarning)
 
 from config import settings
 
@@ -126,6 +130,7 @@ class TelegramClient:
                     timeout=35,
                     proxies=proxies,
                     verify=False,
+                    headers={"Connection": "keep-alive"}
                 )
                 data = resp.json()
                 if data.get("ok"):
