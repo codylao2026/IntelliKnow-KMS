@@ -2053,7 +2053,7 @@ elif page == "Frontend Integration":
                 if tg_token:
                     result, err = api_request(
                         "PUT",
-                        "/api/webhook/env/telegram",
+                        "/api/env/telegram",
                         json={"token": tg_token},
                     )
                     if err:
@@ -2123,7 +2123,7 @@ elif page == "Frontend Integration":
                 if feishu_app_id and feishu_app_secret:
                     result, err = api_request(
                         "PUT",
-                        "/api/webhook/env/feishu",
+                        "/api/env/feishu",
                         json={
                             "app_id": feishu_app_id,
                             "app_secret": feishu_app_secret,
