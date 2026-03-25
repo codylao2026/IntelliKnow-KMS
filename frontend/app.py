@@ -1903,6 +1903,15 @@ elif page == "Query":
                                             f"✅ **Complete!** (Response time: {response_time:.0f}ms)"
                                         )
 
+                                        # Update confidence to answer confidence (from rerank)
+                                        if "confidence" in event_data:
+                                            intent_info["confidence"] = event_data[
+                                                "confidence"
+                                            ]
+                                            intent_info["source"] = event_data.get(
+                                                "confidence_source", "rerank"
+                                            )
+
                                         # Display final response (use full_response which may be corrected)
                                         response_text = (
                                             full_response
