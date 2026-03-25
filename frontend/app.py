@@ -2002,7 +2002,7 @@ elif page == "Frontend Integration":
             """
         <div style="background: #EFF6FF; padding: 16px; border-radius: 12px; margin-bottom: 16px; border-left: 4px solid #229ED9;">
             <h3 style="color: #229ED9; margin: 0;">Telegram Bot</h3>
-            <p style="color: #64748B; margin: 8px 0 0 0;">使用 Polling 模式接收消息</p>
+            <p style="color: #64748B; margin: 8px 0 0 0;">Use Polling mode to receive messages</p>
         </div>
         """,
             unsafe_allow_html=True,
@@ -2013,9 +2013,9 @@ elif page == "Frontend Integration":
         with col1:
             telegram_status = status.get("telegram", {})
             if telegram_status.get("configured"):
-                st.success("✅ Telegram 已配置")
+                st.success("✅ Telegram Configured")
             else:
-                st.warning("⚠️ Telegram 未配置")
+                st.warning("⚠️ Telegram Not Configured")
 
         with col2:
             if telegram_status.get("configured"):
@@ -2041,15 +2041,15 @@ elif page == "Frontend Integration":
             else:
                 st.info("请配置 Bot Token")
 
-        with st.expander("⚙️ 配置 Telegram Bot Token"):
+        with st.expander("⚙️ Configure Telegram Bot Token"):
             tg_token = st.text_input(
                 "Bot Token",
                 type="password",
                 key="tg_token_input",
-                placeholder="从 @BotFather 获取的 Token",
+                placeholder="Get Token from @BotFather",
             )
 
-            if st.button("💾 保存 Token", key="btn_save_telegram"):
+            if st.button("💾 Save Token", key="btn_save_telegram"):
                 if tg_token:
                     result, err = api_request(
                         "PUT",
@@ -2057,14 +2057,16 @@ elif page == "Frontend Integration":
                         json={"token": tg_token},
                     )
                     if err:
-                        st.error(f"保存失败: {err}")
+                        st.error(f"Save failed: {err}")
                     else:
-                        st.success("✅ Token 已保存到 .env 文件，重启服务后生效")
+                        st.success(
+                            "✅ Token saved to .env file, restart service to take effect"
+                        )
                         st.rerun()
                 else:
-                    st.error("请输入 Token")
+                    st.error("Please enter Token")
 
-            if st.button("🔄 刷新状态", key="btn_refresh_telegram"):
+            if st.button("🔄 Refresh Status", key="btn_refresh_telegram"):
                 st.rerun()
 
         st.markdown("---")
@@ -2073,7 +2075,7 @@ elif page == "Frontend Integration":
         st.markdown(
             """
         <div style="background: #FFF7ED; padding: 16px; border-radius: 12px; margin-bottom: 16px; border-left: 4px solid #FF6917;">
-            <h3 style="color: #FF6917; margin: 0;">飞书 Bot (Feishu)</h3>
+            <h3 style="color: #FF6917; margin: 0;">Feishu Bot</h3>
         </div>
         """,
             unsafe_allow_html=True,
@@ -2084,34 +2086,34 @@ elif page == "Frontend Integration":
         with col1:
             feishu_status = status.get("feishu", {})
             if feishu_status.get("configured"):
-                st.success("✅ 飞书已配置")
+                st.success("✅ Feishu Configured")
             else:
-                st.warning("⚠️ 飞书未配置")
+                st.warning("⚠️ Feishu Not Configured")
 
         with col2:
             if feishu_status.get("configured"):
                 # Show running status
                 if feishu_status.get("running"):
-                    st.success("🔴 Bot 运行中")
+                    st.success("🔴 Bot Running")
                 else:
-                    st.info("⚪ Bot 未启动 (需要重启服务)")
+                    st.info("⚪ Bot Not Started (restart service required)")
 
-                if st.button("🔄 测试飞书", key="btn_test_feishu", type="primary"):
+                if st.button("🔄 Test Feishu", key="btn_test_feishu", type="primary"):
                     result, err = api_request(
                         "POST", "/api/credentials/feishu/test", json={}
                     )
                     if err:
                         st.error(f"API error: {err}")
                     elif result and result.get("success"):
-                        st.success("✅ 飞书连接验证通过")
+                        st.success("✅ Feishu connection verified")
                     else:
                         st.error(
-                            f"❌ {result.get('error', '验证失败') if result else '验证失败'}"
+                            f"❌ {result.get('error', 'Verification failed') if result else 'Verification failed'}"
                         )
             else:
-                st.info("请先配置飞书凭据")
+                st.info("Please configure Feishu credentials first")
 
-        with st.expander("⚙️ 配置飞书凭据 (Feishu Credentials)"):
+        with st.expander("⚙️ Configure Feishu Credentials"):
             feishu_app_id = st.text_input(
                 "App ID", key="feishu_app_id", placeholder="cli_xxxxx"
             )
@@ -2119,7 +2121,7 @@ elif page == "Frontend Integration":
                 "App Secret", type="password", key="feishu_app_secret"
             )
 
-            if st.button("💾 保存飞书凭据", key="btn_save_feishu"):
+            if st.button("💾 Save Feishu Credentials", key="btn_save_feishu"):
                 if feishu_app_id and feishu_app_secret:
                     result, err = api_request(
                         "PUT",
@@ -2130,12 +2132,14 @@ elif page == "Frontend Integration":
                         },
                     )
                     if err:
-                        st.error(f"保存失败: {err}")
+                        st.error(f"Save failed: {err}")
                     else:
-                        st.success("✅ 飞书凭据已保存到 .env 文件，重启服务后生效")
+                        st.success(
+                            "✅ Feishu credentials saved to .env file, restart service to take effect"
+                        )
                         st.rerun()
                 else:
-                    st.error("请填写所有字段")
+                    st.error("Please fill in all fields")
 
         st.markdown("---")
 
@@ -2143,7 +2147,7 @@ elif page == "Frontend Integration":
         st.markdown(
             """
         <div style="background: #F8FAFC; padding: 16px; border-radius: 12px; margin-top: 16px;">
-            <h4 style="color: #64748B; margin: 0 0 12px 0;">连接方式</h4>
+            <h4 style="color: #64748B; margin: 0 0 12px 0;">Connection Methods</h4>
         </div>
         """,
             unsafe_allow_html=True,
@@ -2151,10 +2155,10 @@ elif page == "Frontend Integration":
 
         col1, col2 = st.columns(2)
         with col1:
-            st.info("🤖 **Telegram**: Polling 模式 (长轮询)")
-            st.caption("使用 TELEGRAM_BOT_TOKEN 环境变量配置")
+            st.info("🤖 **Telegram**: Polling Mode (Long Polling)")
+            st.caption("Configure via TELEGRAM_BOT_TOKEN environment variable")
         with col2:
-            st.info("📱 **飞书 (Feishu)**: WebSocket 长连接模式")
+            st.info("📱 **Feishu**: WebSocket Long Connection Mode")
 
 
 # ============== Analytics Page ==============
