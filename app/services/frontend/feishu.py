@@ -419,7 +419,21 @@ class FeishuClient:
                     logger.info(f"Feishu App ID: {self.app_id[:10]}...")
                     logger.info(f"Event handler registered: {event_handler is not None}")
                     
-                    ws_client.start()
+                    # 尝试非阻塞启动
+                    try:
+                        # 尝试使用 start_background 如果可用
+                        if hasattr(ws_client, 'start_background'):
+                            logger.info("Using start_background()...")
+                            ws_client.start_background()
+                        else:
+                            logger.info("Using start() (blocking)...")
+                            ws_client.start()
+                    except Exception as ws_err:
+                        logger.error(f"WebSocket start error: {ws_err}")
+                        import traceback
+                        logger.error(f"WS Traceback: {traceback.format_exc()}")
+                        raise
+                    
                     self.ws_client = ws_client
                     self._running = True
                     self._reconnect_count = 0
@@ -485,7 +499,9 @@ class FeishuClient:
             logger.info("Feishu client already running")
             return True
 
-        # 在后台线程启动，包含异常处理
+        # 立即设置_running = True，然后启动线程
+        self._running = True
+        
         import asyncio
         import threading
 
@@ -497,12 +513,13 @@ class FeishuClient:
                 logger.error(f"Feishu WS thread crashed: {e}")
                 import traceback
                 logger.error(f"Traceback: {traceback.format_exc()}")
+                self._running = False
 
         thread = threading.Thread(target=run_with_exception_handling, daemon=True)
         thread.start()
         
         # 等待一下让线程启动
-        await asyncio.sleep(2)
+        await asyncio.sleep(3)
         
         logger.info(f"Feishu background thread started, running={self._running}")
         return True

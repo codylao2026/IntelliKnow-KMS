@@ -254,12 +254,18 @@ def format_sources(contexts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
     for ctx in contexts:
         doc_id = ctx.get("document_id")
-        if doc_id and doc_id not in seen_ids:
-            # Get score - prefer rerank_score, then score
-            score = ctx.get("rerank_score", ctx.get("score"))
+        # Get score - prefer rerank_score, then score
+        score = ctx.get("rerank_score", ctx.get("score"))
 
+        # Debug logging
+        logger.info(
+            f"format_sources: doc_id={doc_id}, score={score}, rerank_score={ctx.get('rerank_score')}, raw_score={ctx.get('score')}"
+        )
+
+        if doc_id and doc_id not in seen_ids:
             # Skip documents with no/zero/negative score (not relevant)
             if not score or score <= 0:
+                logger.info(f"Skipping doc_id={doc_id} due to score={score}")
                 continue
 
             seen_ids.add(doc_id)
@@ -277,6 +283,7 @@ def format_sources(contexts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     # Sort by score descending
     sources.sort(key=lambda x: x.get("score", 0), reverse=True)
 
+    logger.info(f"format_sources: returning {len(sources)} sources")
     return sources
 
 
