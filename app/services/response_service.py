@@ -112,10 +112,9 @@ ANSWERING REQUIREMENTS:
 - Do NOT use your general knowledge or make assumptions
 - Extract specific information from the documents provided
 - Cite each fact using [docN] format at the end of the sentence
+- Example: "Employees get 15 days annual leave[doc1]"
 - Answer in the same language as the user's question
-- If the documents don't contain relevant information, clearly state: "I could not find relevant information in the knowledge base."
-- Do NOT include citation markers like [doc1], [doc2], "Sources:", or any document names in your answer
-- The system will automatically display source references below your response
+- If the documents don't contain relevant information, clearly state: "I could not find relevant information in the knowledge base." (do NOT cite)
 
 Provide your answer:"""
 
@@ -126,100 +125,101 @@ def validate_and_fix_citations(
     response: str, contexts: List[Dict[str, Any]], query: str = ""
 ) -> tuple:
     """
-    Remove any citation markers from the response and handle "not found" cases
+    Validate citations in response and map to actual doc_ids.
+    
+    Ensures response and sources are aligned - only returns sources that are actually cited.
 
     Args:
         response: The generated response text
-        contexts: The sources (for returning)
-        query: The original query (for regenerating if needed)
+        contexts: The sources (knowledge base documents)
+        query: The original query
 
     Returns:
-        Tuple of (cleaned_response, corrected_sources)
+        Tuple of (cleaned_response, cited_doc_ids)
+        - cleaned_response: Response with valid [docN] citations kept
+        - cited_doc_ids: List of actual doc_ids that were cited in the response
     """
     import re
-
-    # Validate citations - ensure [docN] references are valid
+    
     num_docs = len(contexts) if contexts else 0
-
+    cited_doc_ids = []
+    
     if num_docs > 0:
-        # Extract all [docN] citations from response
-        cited_docs = set(re.findall(r"\[doc(\d+)\]", response, re.IGNORECASE))
-
-        logger.info(
-            f"validate_citations: found citations {cited_docs}, have {num_docs} docs"
-        )
-
-        # Remove invalid citations (doc number exceeds available docs)
-        for doc_num_str in cited_docs:
+        # Step 1: Build mapping docN -> actual doc_id
+        doc_num_to_doc_id = {}
+        for i, ctx in enumerate(contexts):
+            doc_num = i + 1  # doc1, doc2, doc3...
+            actual_doc_id = ctx.get("document_id") or ctx.get("doc_id") or ctx.get("metadata", {}).get("doc_id") or ctx.get("metadata", {}).get("document_id")
+            if actual_doc_id:
+                doc_num_to_doc_id[doc_num] = actual_doc_id
+        
+        logger.info(f"Citation mapping: {doc_num_to_doc_id}")
+        
+        # Step 2: Extract all [docN] citations from response
+        cited_doc_nums = set(re.findall(r"\[doc(\d+)\]", response, re.IGNORECASE))
+        logger.info(f"Found citations in response: {cited_doc_nums}")
+        
+        # Step 3: Validate and map to actual doc_ids
+        valid_cited_doc_nums = set()
+        for doc_num_str in cited_doc_nums:
             doc_num = int(doc_num_str)
             if doc_num > num_docs:
-                # Remove this invalid citation
-                response = re.sub(
-                    rf"\[doc{doc_num_str}\]", "", response, flags=re.IGNORECASE
-                )
-                logger.warning(
-                    f"Removed invalid citation [doc{doc_num_str}] - only have {num_docs} docs"
-                )
-
-        # Clean up extra whitespace after removing citations
+                # Remove invalid citation (doc number exceeds available docs)
+                response = re.sub(rf"\[doc{doc_num_str}\]", "", response, flags=re.IGNORECASE)
+                logger.warning(f"Removed invalid citation [doc{doc_num_str}] - only have {num_docs} docs")
+            elif doc_num in doc_num_to_doc_id:
+                # Valid citation - keep it and record the actual doc_id
+                valid_cited_doc_nums.add(doc_num)
+                actual_id = doc_num_to_doc_id[doc_num]
+                if actual_id not in cited_doc_ids:
+                    cited_doc_ids.append(actual_id)
+        
+        # Step 4: Clean up extra whitespace
         response = re.sub(r"\s+", " ", response)
         response = re.sub(r"\s*,\s*", ", ", response)
-
-    # Get list of document names from contexts for pattern removal
-    doc_names_to_remove = []
-    if contexts:
-        for ctx in contexts:
-            doc_name = ctx.get("metadata", {}).get("document_name", "")
-            if doc_name:
-                doc_names_to_remove.append(re.escape(doc_name))
-
-    # Check if LLM says it couldn't find info but we have contexts
+    
+    # Step 5: Check if LLM says it couldn't find info
     not_found_patterns = [
         r"could not find",
         r"no[t ]*relevant",
         r"do not have.*information",
         r"could[n\']*t find.*information",
     ]
-
+    
     llm_says_not_found = any(
         re.search(p, response, re.IGNORECASE) for p in not_found_patterns
     )
-
-    # Note: Removed the "LLM said not found but had contexts - replace with KB content" logic
-    # This caused poor quality answers by concatenating raw chunks without proper synthesis
-
-    # Check if LLM says it couldn't find info - lower confidence if so
-    llm_not_found = False
+    
     if llm_says_not_found:
         logger.info("LLM indicated not found - will adjust confidence")
-        llm_not_found = True
-
-    # Remove patterns that shouldn't be in final response (but keep [docN] citations)
+        cited_doc_ids = []  # Clear citations if LLM says not found
+    
+    # Step 6: Remove unwanted patterns but keep [docN] citations
+    doc_names_to_remove = []
+    if contexts:
+        for ctx in contexts:
+            doc_name = ctx.get("metadata", {}).get("document_name", "")
+            if doc_name:
+                doc_names_to_remove.append(re.escape(doc_name))
+    
     patterns_to_remove = [
         r"Sources?:\s*\[?[^\]]*\]?",
         r"References?:\s*\[?[^\]]*\]?",
     ]
-
+    
     for doc_name_pattern in doc_names_to_remove:
         if doc_name_pattern:
             patterns_to_remove.append(r"\[\s*" + doc_name_pattern + r"\s*\]")
-
+    
     for pattern in patterns_to_remove:
         response = re.sub(pattern, "", response, flags=re.IGNORECASE)
-
+    
     # Clean up extra whitespace
     response = re.sub(r"\s+", " ", response).strip()
-
-    return response, None  # Return tuple (response, corrected_sources)
-
-    response = re.sub(r"\s*,\s*\[?\s*\]?\s*$", "", response)
-    response = re.sub(r"\s*\.\s*\[?\s*\]?\s*$", "", response)
-    response = re.sub(r"\s*\[\s*\]\s*$", "", response)
-    response = re.sub(r"\s+", " ", response)
-    response = re.sub(r"\n{3,}", "\n\n", response)
-    response = response.strip()
-
-    return response, contexts
+    
+    logger.info(f"Final cited_doc_ids: {cited_doc_ids}")
+    
+    return response, cited_doc_ids
 
 
 async def generate_response_from_rag(
@@ -265,23 +265,50 @@ async def generate_response_from_rag(
         return "Sorry, an error occurred while generating the response. Please try again later."
 
 
-def format_sources(contexts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def format_sources(
+    contexts: List[Dict[str, Any]], 
+    filter_doc_ids: Optional[List[Any]] = None
+) -> List[Dict[str, Any]]:
     """
     Format source documents for response
 
     Args:
         contexts: List of context documents
+        filter_doc_ids: Optional list of doc_ids to include. If provided, only these docs are returned.
 
     Returns:
         Formatted sources (sorted by relevance, only include score > 0)
     """
     sources = []
     seen_ids = set()
+    
+    # If filter_doc_ids provided, convert to set for O(1) lookup
+    filter_set = set(filter_doc_ids) if filter_doc_ids else None
+    """
+    Format source documents for response
+
+    Args:
+        contexts: List of context documents
+        filter_doc_ids: Optional list of doc_ids to include. If provided, only these docs are returned.
+
+    Returns:
+        Formatted sources (sorted by relevance, only include score > 0)
+    """
+    sources = []
+    seen_ids = set()
+    
+    # If filter_doc_ids provided, convert to set for O(1) lookup
+    filter_set = set(filter_doc_ids) if filter_doc_ids else None
 
     for ctx in contexts:
         doc_id = ctx.get("document_id")
         # Get score - prefer rerank_score, then score
         score = ctx.get("rerank_score", ctx.get("score"))
+        
+        # If filtering by doc_ids, skip docs not in the list
+        if filter_set is not None:
+            if doc_id not in filter_set:
+                continue
 
         if doc_id and doc_id not in seen_ids:
             # Skip documents with score < 0.01 (not relevant enough)
@@ -304,7 +331,7 @@ def format_sources(contexts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     # Sort by score descending
     sources.sort(key=lambda x: x.get("score", 0), reverse=True)
 
-    logger.info(f"format_sources: returning {len(sources)} sources")
+    logger.info(f"format_sources: returning {len(sources)} sources (filtered: {filter_set is not None})")
     return sources
 
 
@@ -554,14 +581,14 @@ async def process_query(
             if response_text is None:
                 response_text = ""
 
-            # Step 9: Validate and fix citations, check if LLM couldn't answer
-            response_text, _ = validate_and_fix_citations(
+            # Step 9: Validate and fix citations, get cited doc_ids
+            response_text, cited_doc_ids = validate_and_fix_citations(
                 str(response_text), reranked_results, query
             )
 
             # Check if LLM couldn't answer - lower confidence and clear sources
             llm_not_found = (
-                "could not find" in response_text.lower()
+                "could not found" in response_text.lower()
                 or "no relevant" in response_text.lower()
             )
 
@@ -573,9 +600,9 @@ async def process_query(
                 logger.info(
                     f"LLM couldn't answer - set confidence to {answer_confidence}, cleared sources"
                 )
-
-            # Step 10: Format sources (use corrected sources if citations were fixed)
-            sources = format_sources(reranked_results)
+            else:
+                # Step 10: Format sources - filter to only include cited documents
+                sources = format_sources(reranked_results, filter_doc_ids=cited_doc_ids)
             response_time = (time.time() - start_time) * 1000
             status = "success"
 
@@ -875,8 +902,8 @@ async def process_query_streaming(
             full_response += token
             yield f"data: {json.dumps({'event': 'token', 'data': {'token': token}})}\n\n"
 
-        # Validate and fix citations to match actual sources
-        full_response, _ = validate_and_fix_citations(
+        # Validate and fix citations to get actual cited doc_ids
+        full_response, cited_doc_ids = validate_and_fix_citations(
             full_response, reranked_results, query
         )
 
@@ -894,10 +921,9 @@ async def process_query_streaming(
             logger.info(
                 f"LLM couldn't answer - set confidence to {answer_confidence}, cleared sources"
             )
-
-        # Update sources if citations were fixed
-        if corrected_sources:
-            sources = format_sources(corrected_sources)
+        else:
+            # Update sources to only include cited documents
+            sources = format_sources(reranked_results, filter_doc_ids=cited_doc_ids)
 
         # Send corrected response
         yield f"data: {json.dumps({'event': 'corrected_response', 'data': {'response': full_response}})}\n\n"
