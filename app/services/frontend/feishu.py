@@ -340,7 +340,12 @@ class FeishuClient:
         self, data: lark.im.v1.P2ImMessageReceiveV1
     ) -> None:
         """处理接收到的消息事件"""
-        logger.info(f"[Feishu] Message received")
+        logger.info(f"[Feishu] Message received - data type: {type(data)}")
+        logger.info(f"[Feishu] Raw data: {data}")
+        
+        if not hasattr(data, 'event') or not data.event:
+            logger.warning(f"[Feishu] No event in data: {dir(data)}")
+            return
 
         parsed = self._parse_message(data)
         if not parsed:
@@ -371,6 +376,11 @@ class FeishuClient:
         """后台线程运行WebSocket客户端"""
         import asyncio
 
+        logger.info("=== Feishu WS Client thread started ===")
+        logger.info(f"App ID: {self.app_id}")
+        logger.info(f"App Secret length: {len(self.app_secret) if self.app_secret else 0}")
+        logger.info(f"SDK available: {LARK_SDK_AVAILABLE}")
+
         # 为飞书WebSocket创建独立的event loop
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -378,8 +388,12 @@ class FeishuClient:
         try:
             reconnect_event = threading.Event()
 
+            logger.info("Starting WebSocket connection loop...")
+
             while self._running and self._reconnect_count < self._max_reconnects:
                 try:
+                    logger.info(f"Creating event handler (attempt {self._reconnect_count + 1})...")
+                    
                     event_handler = (
                         lark.EventDispatcherHandler.builder(
                             self.app_id, self.app_secret
@@ -389,6 +403,8 @@ class FeishuClient:
                         )
                         .build()
                     )
+
+                    logger.info("Creating WebSocket client...")
 
                     ws_client = lark.ws.Client(
                         self.app_id,
@@ -400,6 +416,9 @@ class FeishuClient:
                     logger.info(
                         f"Feishu WebSocket client starting (attempt {self._reconnect_count + 1})..."
                     )
+                    logger.info(f"Feishu App ID: {self.app_id[:10]}...")
+                    logger.info(f"Event handler registered: {event_handler is not None}")
+                    
                     ws_client.start()
                     self.ws_client = ws_client
                     self._running = True
@@ -466,12 +485,26 @@ class FeishuClient:
             logger.info("Feishu client already running")
             return True
 
-        # 不等待，直接在后台线程启动
+        # 在后台线程启动，包含异常处理
         import asyncio
+        import threading
 
-        loop = asyncio.get_event_loop()
-        loop.run_in_executor(None, self._run_ws_client)
-        logger.info("Feishu background thread started")
+        def run_with_exception_handling():
+            try:
+                logger.info("Feishu WS thread: starting...")
+                self._run_ws_client()
+            except Exception as e:
+                logger.error(f"Feishu WS thread crashed: {e}")
+                import traceback
+                logger.error(f"Traceback: {traceback.format_exc()}")
+
+        thread = threading.Thread(target=run_with_exception_handling, daemon=True)
+        thread.start()
+        
+        # 等待一下让线程启动
+        await asyncio.sleep(2)
+        
+        logger.info(f"Feishu background thread started, running={self._running}")
         return True
 
     def stop(self):

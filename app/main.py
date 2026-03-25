@@ -46,6 +46,21 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Feishu initialization error: {e}")
 
+    # Initialize Telegram client
+    try:
+        from app.services.frontend.telegram import get_telegram_client
+
+        telegram = get_telegram_client()
+        if telegram.is_configured():
+            import threading
+            thread = threading.Thread(target=telegram.start, daemon=True)
+            thread.start()
+            logger.info("Telegram client started")
+        else:
+            logger.info("Telegram not configured")
+    except Exception as e:
+        logger.warning(f"Telegram initialization error: {e}")
+
     yield
     # Shutdown
     logger.info("Shutting down IntelliKnow KMS...")

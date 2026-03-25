@@ -428,6 +428,15 @@ async def process_query(
                 f"Filtered from {original_count} to {len(search_results)} results for intent {intent_id}"
             )
 
+        # Filter out zero/negative score results
+        original_filtered_count = len(search_results)
+        search_results = [
+            r for r in search_results if r.get("score", r.get("rerank_score", 0)) > 0.01
+        ]
+        logger.info(
+            f"Filtered out {original_filtered_count - len(search_results)} zero-score results"
+        )
+
         # If filtered to 0, return no results
         if not search_results:
             logger.warning("=== NO RESULTS AFTER FILTER ===")
@@ -693,6 +702,15 @@ async def process_query_streaming(
             logger.info(
                 f"Filtered from {original_count} to {len(search_results)} results for intent {intent_id}"
             )
+
+        # Filter out zero/negative score results
+        original_filtered_count = len(search_results)
+        search_results = [
+            r for r in search_results if r.get("score", r.get("rerank_score", 0)) > 0.01
+        ]
+        logger.info(
+            f"Filtered out {original_filtered_count - len(search_results)} zero-score results"
+        )
 
         # If filtered to 0, return no results
         if not search_results:
