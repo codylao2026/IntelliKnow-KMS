@@ -24,44 +24,53 @@ ENABLE_PARALLEL_SEARCH = True  # Run intent + search in parallel
 RERANK_CONFIDENCE_THRESHOLD = 0.7  # Skip reranking if confidence > this value
 REDUCED_TOP_K = 4  # Reduced from 6
 
-# Few-shot examples for response generation
+# Few-shot examples for response generation (with proper citation format)
 FEW_SHOT_EXAMPLES = """Example 1 (HR):
 Knowledge Base:
-【Document 1】Leave Policy: Employees are entitled to 10 days of paid annual leave per year. Submit requests 3 days in advance, or immediately for special circumstances.
+doc1: HR-POL-001 Leave Policy.pdf---Employees are entitled to 10 days of paid annual leave per year. Submit requests 3 days in advance for approval.
 
 User Question: How many days of annual leave do I have?
 
-Answer: According to company policy, employees are entitled to 10 days of paid annual leave per year. Submit requests 3 days in advance. Sources: [doc1]
+Answer: According to company policy, employees are entitled to 10 days of paid annual leave per year. Submit requests at least 3 days in advance for manager approval[doc1].
 
 ---
 
 Example 2 (Finance):
 Knowledge Base:
-【Document 1】Expense Reimbursement: Travel expenses must be submitted within 7 days after returning. Meal expenses are capped at 200 yuan per day. Original receipts are required.
+doc1: FIN-POL-001 Expense Reimbursement Policy.pdf---Travel expenses must be submitted within 7 days after returning from business trip. Meal expenses are capped at 200 yuan per day. Original receipts are required.
 
 User Question: What is the deadline for submitting travel expense reimbursement?
 
-Answer: Travel expenses must be submitted within 7 days after returning from the business trip. Original receipts are required. Sources: [doc1]
+Answer: Travel expenses must be submitted within 7 days after returning from your business trip. Original receipts are required for all reimbursement claims[doc1].
 
 ---
 
 Example 3 (Legal):
 Knowledge Base:
-【Document 1】Employment Contract: All employees must sign a labor contract within one month of joining. The contract specifies job duties, working hours, compensation, and termination conditions.
+doc1: LEG-POL-001 Employment Contract Policy.pdf---All employees must sign a labor contract within one month of joining the company. The contract specifies job duties, working hours, compensation, and termination conditions.
 
 User Question: When should I sign my employment contract?
 
-Answer: All employees must sign a labor contract within one month of joining the company. The contract specifies job duties, working hours, compensation, and termination conditions. Sources: [doc1]"""
+Answer: All employees must sign a labor contract within one month of joining the company. The contract will specify your job duties, working hours, compensation, and termination conditions[doc1]."""
 
 # System prompt for response generation
 SYSTEM_PROMPT = f"""You are an enterprise knowledge management assistant. Your task is to answer user questions based ONLY on the provided knowledge base documents.
 
-CRITICAL RULES:
+# CRITICAL RULES:
 1. You MUST base your answer ONLY on the knowledge base content provided below
 2. NEVER use your general knowledge or make up information
 3. If the knowledge base doesn't contain relevant information, explicitly state: "I could not find relevant information in the knowledge base."
-4. DO NOT include any citation markers like [doc1], [doc2], or "Sources:" in your answer
-5. Answer in the same language as the user's question
+4. Answer in the same language as the user's question
+
+# CITATION REQUIREMENTS (IMPORTANT):
+When you use information from the provided documents, you MUST cite the source using [docN] format at the end of each fact.
+Example: "Employees must submit resignation at least 30 days in advance[doc1]"
+
+Do NOT combine sources. Cite each fact separately.
+Example correct: "Annual leave is 15-25 days based on service length[doc1]. Overtime requires manager approval[doc2]."
+Example incorrect: "Annual leave is 15-25 days[doc1,doc2]" (combining sources)
+
+If you cannot find relevant information in the documents, say so clearly WITHOUT making up any information or citations.
 
 {FEW_SHOT_EXAMPLES}"""
 
@@ -82,12 +91,14 @@ def build_rag_prompt(query: str, contexts: List[Dict[str, Any]]) -> str:
 
 I could not find relevant information in the knowledge base to answer this question. Please try rephrasing or contact the administrator."""
 
+    # Build document content in format: "doc1: filename---content"
     context_parts = []
     for i, ctx in enumerate(contexts):
-        doc_num = i + 1
+        doc_num = i + 1  # 1-based index for docN
         doc_name = ctx.get("metadata", {}).get("document_name", f"Document {doc_num}")
         content = ctx.get("content", "")
-        context_parts.append(f"【Document {doc_num}: {doc_name}】\n{content}")
+        # Format: "doc1: filename---content"
+        context_parts.append(f"doc{doc_num}: {doc_name}---{content}")
 
     context_text = "\n\n".join(context_parts)
 
@@ -100,6 +111,8 @@ ANSWERING REQUIREMENTS:
 - Answer based ONLY on the knowledge base content above
 - Do NOT use your general knowledge or make assumptions
 - Extract specific information from the documents provided
+- Cite each fact using [docN] format at the end of the sentence
+- Answer in the same language as the user's question
 - If the documents don't contain relevant information, clearly state: "I could not find relevant information in the knowledge base."
 - Do NOT include citation markers like [doc1], [doc2], "Sources:", or any document names in your answer
 - The system will automatically display source references below your response
@@ -121,11 +134,38 @@ def validate_and_fix_citations(
         query: The original query (for regenerating if needed)
 
     Returns:
-        Tuple of (cleaned_response, contexts)
+        Tuple of (cleaned_response, corrected_sources)
     """
     import re
 
-    # Get list of document names from contexts
+    # Validate citations - ensure [docN] references are valid
+    num_docs = len(contexts) if contexts else 0
+
+    if num_docs > 0:
+        # Extract all [docN] citations from response
+        cited_docs = set(re.findall(r"\[doc(\d+)\]", response, re.IGNORECASE))
+
+        logger.info(
+            f"validate_citations: found citations {cited_docs}, have {num_docs} docs"
+        )
+
+        # Remove invalid citations (doc number exceeds available docs)
+        for doc_num_str in cited_docs:
+            doc_num = int(doc_num_str)
+            if doc_num > num_docs:
+                # Remove this invalid citation
+                response = re.sub(
+                    rf"\[doc{doc_num_str}\]", "", response, flags=re.IGNORECASE
+                )
+                logger.warning(
+                    f"Removed invalid citation [doc{doc_num_str}] - only have {num_docs} docs"
+                )
+
+        # Clean up extra whitespace after removing citations
+        response = re.sub(r"\s+", " ", response)
+        response = re.sub(r"\s*,\s*", ", ", response)
+
+    # Get list of document names from contexts for pattern removal
     doc_names_to_remove = []
     if contexts:
         for ctx in contexts:
@@ -154,18 +194,10 @@ def validate_and_fix_citations(
         logger.info("LLM indicated not found - will adjust confidence")
         llm_not_found = True
 
-    return response, None  # Return tuple (response, corrected_sources)
-
-    # Remove citation patterns
+    # Remove patterns that shouldn't be in final response (but keep [docN] citations)
     patterns_to_remove = [
         r"Sources?:\s*\[?[^\]]*\]?",
         r"References?:\s*\[?[^\]]*\]?",
-        r"\[(?:doc|DOC)[0-9]+\]",
-        r"\[(?:FIN|HR|LEG)[A-Z0-9\-_]+\]",
-        r"\[\s*[A-Z]{2,3}-[A-Z]+-[0-9]+\s*[^\]]*\]",
-        r"\[\s*[A-Z]{2,3}-[A-Z]+-[0-9]+\s*\.(?:pdf|docx)\]",
-        r"【[^】]*】",
-        r"§[^§\n]*§",
     ]
 
     for doc_name_pattern in doc_names_to_remove:
@@ -174,6 +206,11 @@ def validate_and_fix_citations(
 
     for pattern in patterns_to_remove:
         response = re.sub(pattern, "", response, flags=re.IGNORECASE)
+
+    # Clean up extra whitespace
+    response = re.sub(r"\s+", " ", response).strip()
+
+    return response, None  # Return tuple (response, corrected_sources)
 
     response = re.sub(r"\s*,\s*\[?\s*\]?\s*$", "", response)
     response = re.sub(r"\s*\.\s*\[?\s*\]?\s*$", "", response)
@@ -522,18 +559,19 @@ async def process_query(
                 str(response_text), reranked_results, query
             )
 
-            # Check if LLM couldn't answer - lower confidence
+            # Check if LLM couldn't answer - lower confidence and clear sources
             llm_not_found = (
                 "could not find" in response_text.lower()
                 or "no relevant" in response_text.lower()
             )
 
-            # If LLM said not found, override confidence
+            # If LLM said not found, override confidence and clear sources
             if llm_not_found:
                 answer_confidence = 0.3
                 answer_confidence_source = "llm_not_found"
+                sources = []  # Clear sources since LLM couldn't find answer
                 logger.info(
-                    f"LLM couldn't answer - set confidence to {answer_confidence}"
+                    f"LLM couldn't answer - set confidence to {answer_confidence}, cleared sources"
                 )
 
             # Step 10: Format sources (use corrected sources if citations were fixed)
@@ -842,17 +880,20 @@ async def process_query_streaming(
             full_response, reranked_results, query
         )
 
-        # Check if LLM couldn't answer - lower confidence
+        # Check if LLM couldn't answer - lower confidence and clear sources
         llm_not_found = (
             "could not find" in full_response.lower()
             or "no relevant" in full_response.lower()
         )
 
-        # If LLM said not found, override confidence
+        # If LLM said not found, override confidence and clear sources
         if llm_not_found:
             answer_confidence = 0.3
             answer_confidence_source = "llm_not_found"
-            logger.info(f"LLM couldn't answer - set confidence to {answer_confidence}")
+            sources = []  # Clear sources since LLM couldn't find answer
+            logger.info(
+                f"LLM couldn't answer - set confidence to {answer_confidence}, cleared sources"
+            )
 
         # Update sources if citations were fixed
         if corrected_sources:
