@@ -1,56 +1,49 @@
-# IntelliKnow KMS Project
+# IntelliKnow KMS
+
+Gen AI-powered Knowledge Management System with RAG (Retrieval-Augmented Generation) for enterprise knowledge base Q&A.
+
+## Overview
+
+IntelliKnow KMS enables employees to query enterprise knowledge base via AI-powered chat interfaces (Telegram, Feishu). It features:
+- **Intent Classification**: LLM-based + keyword fallback for accurate query routing
+- **Hybrid Search**: FAISS vector store + BM25 with RRF fusion
+- **Reranking**: BAAI/bge-reranker-v2-m3 for improved relevance
+- **Multi-channel**: Telegram (Polling) and Feishu (WebSocket) support
+
+## Tech Stack
+
+- **Backend**: FastAPI
+- **Frontend**: Streamlit
+- **Database**: SQLite (metadata), FAISS (vectors)
+- **AI**: LangChain + SiliconCloud API (BGE-M3, Reranker, Qwen)
+- **Search**: BM25 + FAISS hybrid with RRF fusion
 
 ## Directory Structure
 
 ```
-40-IntelliKnow-KMS/
-├── docs/                         # Project documentation
-│   ├── IntelliKnow-KMS-需求规格说明书-SRS.md   # Full requirement specification
-│   ├── PRD.md                   # Product requirements (for Claude Code)
-│   └── CaseStudy-需求映射表.md  # Case Study requirement mapping
-│
-├── app/                          # Application code
-│   ├── api/                      # FastAPI routes
-│   ├── services/                 # Business logic
-│   ├── models/                   # Data models
-│   └── utils/                    # Utilities
-│
-├── frontend/                     # Streamlit admin dashboard
-│   └── app.py
-│
-├── data/                         # Data storage
-│   ├── sqlite/                   # SQLite database
-│   ├── vectors/                  # FAISS vector store
-│   └── uploads/                  # Uploaded documents
-│
-├── tests/                        # Test code
-│
-├── scripts/                      # Script tools
-│
-├── config/                       # Configuration
-│   └── settings.py
-│
-├── requirements.txt              # Python dependencies
-└── README.md                     # Project documentation
+IntelliKnow-KMS/
+├── app/                    # FastAPI application
+│   ├── api/               # API routes
+│   ├── services/          # Business logic
+│   ├── models/            # DB models
+│   └── utils/             # Utilities
+├── frontend/              # Streamlit dashboard
+├── data/                  # Data storage
+│   ├── sqlite/            # SQLite DB
+│   ├── vectors/          # FAISS index
+│   └── uploads/           # Uploaded files
+├── config/                # Configuration
+└── requirements.txt       # Python dependencies
 ```
 
-## Quick Access
+## Quick Start
 
 ```bash
-# Access project directory
-cd ~/Obsidian-Vault/40-Projects/40-IntelliKnow-KMS
+# 1. Clone and enter directory
+git clone https://github.com/Albertlsy588/IntelliKnow-KMS.git
+cd IntelliKnow-KMS
 
-# Or on Windows
-# C:\Users\alber\Documents\Obsidian-Vault\40-Projects\40-IntelliKnow-KMS
-```
-
-## Development Setup
-
-```bash
-# 1. Enter project directory
-cd ~/Obsidian-Vault/40-Projects/40-IntelliKnow-KMS
-
-# 2. Create virtual environment (first time)
+# 2. Create virtual environment
 python -m venv venv
 source venv/bin/activate  # Linux/Mac
 # venv\Scripts\activate   # Windows
@@ -58,26 +51,32 @@ source venv/bin/activate  # Linux/Mac
 # 3. Install dependencies
 pip install -r requirements.txt
 
-# 4. Configure environment variables
+# 4. Configure environment
 cp config/.env.example config/.env
-# Edit .env with API keys
+# Edit .env with your API keys
 
-# 5. Start FastAPI backend
+# 5. Start backend (port 8000)
 uvicorn app.main:app --reload --port 8000
 
-# 6. Start Streamlit frontend (new terminal)
+# 6. Start frontend (new terminal, port 8501)
 streamlit run frontend/app.py
 ```
 
+## Access
+
+- Backend API: http://localhost:8000
+- Frontend Dashboard: http://localhost:8501
+- API Docs: http://localhost:8000/docs
+
 ## Project Status
 
-- [x] Requirement specification complete
+- [x] Requirement specification
 - [x] Project initialization
-- [x] Core module development
-- [x] Frontend integration
+- [x] Core module development (RAG, intent classification, hybrid search)
+- [x] Frontend integration (Telegram, Feishu)
 - [ ] Testing & optimization
-- [ ] Delivery
+- [ ] Production deployment
 
 ---
 
-**Last Updated**: 2026-03-19
+**Last Updated**: 2026-03-25
