@@ -344,8 +344,9 @@ async def process_query(
 
         # Step 2: Get all document IDs for this intent from database
         valid_doc_ids = []
-        has_intent_docs = True
+        has_intent_docs = False  # Default to False - no documents
         intent_doc_query_error = None
+
         if intent_id is not None:
             try:
                 from sqlalchemy import select
@@ -363,64 +364,18 @@ async def process_query(
                 intent_doc_query_error = str(e)
                 logger.error(f"Failed to get documents for intent {intent_id}: {e}")
 
-        # If intent has no documents, return early (only if query succeeded)
-        # Note: If search happens and finds results, we'll filter by intent docs
-        if intent_doc_query_error is None and not has_intent_docs:
-            # First do search to see if there are any relevant docs
-            search_results = await search_documents(
-                query=query,
-                intent_id=None,
-                top_k=REDUCED_TOP_K,
-            )
+        # If intent has no documents, return early - NO search for other intents
+        if not has_intent_docs:
+            logger.warning(f"=== INTENT HAS NO DOCUMENTS ===")
+            response_text = "I couldn't find relevant documents for your query. Please check if the intent space has uploaded documents."
 
-            # Filter by document_id (only return chunks from valid intent documents)
-            if valid_doc_ids:
-                search_results = [
-                    r for r in search_results if r.get("document_id") in valid_doc_ids
-                ]
-
-            # If no search results for this intent, return no docs message
-            if not search_results:
-                logger.warning(
-                    f"Intent '{intent_name}' has no documents and no search results - returning no documents response"
-                )
-                query_log = QueryLog(
-                    query=query,
-                    intent_name=intent_name,
-                    intent_id=intent_id,
-                    confidence=0.0,
-                    confidence_source="no_documents",
-                    response="I couldn't find relevant documents for your query. Please check if the intent space has uploaded documents.",
-                    sources=[],
-                    frontend=frontend,
-                    status="no_intent_documents",
-                    response_time=(time.time() - start_time) * 1000,
-                )
-                db.add(query_log)
-                await db.commit()
-
-                return {
-                    "query": query,
-                    "response": "I couldn't find relevant documents for your query. Please check if the intent space has uploaded documents.",
-                    "intent": intent_name,
-                    "confidence": 0.0,
-                    "confidence_source": "no_documents",
-                    "sources": [],
-                    "response_time": (time.time() - start_time) * 1000,
-                    "status": "no_intent_documents",
-                }
-
-            # If search found results from other intents, use them but with low confidence
-            logger.info(
-                f"Intent '{intent_name}' has no docs but search found {len(search_results)} results from other intents - using with low confidence"
-            )
             query_log = QueryLog(
                 query=query,
                 intent_name=intent_name,
                 intent_id=intent_id,
                 confidence=0.0,
                 confidence_source="no_documents",
-                response="I couldn't find relevant documents for your query. Please check if the intent space has uploaded documents.",
+                response=response_text,
                 sources=[],
                 frontend=frontend,
                 status="no_intent_documents",
@@ -431,7 +386,7 @@ async def process_query(
 
             return {
                 "query": query,
-                "response": "I couldn't find relevant documents for your query. Please check if the intent space has uploaded documents.",
+                "response": response_text,
                 "intent": intent_name,
                 "confidence": 0.0,
                 "confidence_source": "no_documents",
@@ -452,7 +407,6 @@ async def process_query(
         # Step 4: Filter by document_id (only return chunks from valid intent documents)
         if valid_doc_ids:
             original_count = len(search_results)
-            # Debug: log all search results' document_ids
             all_doc_ids = [r.get("document_id") for r in search_results]
             logger.info(f"Search results document_ids: {all_doc_ids}")
             logger.info(f"Valid doc_ids for intent {intent_id}: {valid_doc_ids}")
@@ -464,12 +418,36 @@ async def process_query(
                 f"Filtered from {original_count} to {len(search_results)} results for intent {intent_id}"
             )
 
-            # If filtered to 0, show why
-            if len(search_results) == 0 and original_count > 0:
-                for r in search_results[:3]:
-                    logger.warning(
-                        f"Result doc_id={r.get('document_id')} not in valid_doc_ids {valid_doc_ids}"
-                    )
+        # If filtered to 0, return no results
+        if not search_results:
+            logger.warning("=== NO RESULTS AFTER FILTER ===")
+            response_text = "I couldn't find relevant documents for your query."
+
+            query_log = QueryLog(
+                query=query,
+                intent_name=intent_name,
+                intent_id=intent_id,
+                confidence=0.0,
+                confidence_source="no_results",
+                response=response_text,
+                sources=[],
+                frontend=frontend,
+                status="no_results",
+                response_time=(time.time() - start_time) * 1000,
+            )
+            db.add(query_log)
+            await db.commit()
+
+            return {
+                "query": query,
+                "response": response_text,
+                "intent": intent_name,
+                "confidence": 0.0,
+                "confidence_source": "no_results",
+                "sources": [],
+                "response_time": (time.time() - start_time) * 1000,
+                "status": "no_results",
+            }
 
         # Log search result details for debugging
         for i, result in enumerate(search_results[:3]):
@@ -488,8 +466,8 @@ async def process_query(
             )
 
         # Step 6: Calculate answer confidence based on rerank scores (not intent classification)
-        answer_confidence = confidence
-        answer_confidence_source = confidence_source
+        answer_confidence = 0.3
+        answer_confidence_source = "default"
 
         if reranked_results:
             top_score = reranked_results[0].get(
@@ -497,16 +475,16 @@ async def process_query(
             )
             if top_score >= 0.8:
                 answer_confidence = 0.95
-                answer_confidence_source = "rerank_high"
+                answer_confidence_source = "high"
             elif top_score >= 0.5:
                 answer_confidence = 0.7
-                answer_confidence_source = "rerank_medium"
+                answer_confidence_source = "medium"
             elif top_score >= 0.3:
                 answer_confidence = 0.5
-                answer_confidence_source = "rerank_low"
+                answer_confidence_source = "low"
             else:
                 answer_confidence = 0.3
-                answer_confidence_source = "rerank_very_low"
+                answer_confidence_source = "very_low"
             logger.info(
                 f"Answer confidence: {answer_confidence:.2f} (top_score={top_score:.3f}, source={answer_confidence_source})"
             )
@@ -539,12 +517,7 @@ async def process_query(
                 corrected_sources if corrected_sources else reranked_results
             )
             response_time = (time.time() - start_time) * 1000
-
-            # Determine status
-            if not search_results:
-                status = "no_results"
-            else:
-                status = "success"
+            status = "success"
 
         # Step 11: Log query
         query_log = QueryLog(
@@ -574,7 +547,7 @@ async def process_query(
         }
 
     except Exception as e:
-        logger.error(f"Query processing error: {e}")
+        logger.error(f"Query processing error: {e}", exc_info=True)
         response_time = (time.time() - start_time) * 1000
 
         # Log failed query
@@ -596,6 +569,7 @@ async def process_query(
             "response": "Sorry, an error occurred while processing your query. Please try again later.",
             "intent": "error",
             "confidence": 0.0,
+            "confidence_source": "error",
             "sources": [],
             "response_time": response_time,
             "status": "failed",
