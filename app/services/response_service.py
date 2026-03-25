@@ -145,27 +145,9 @@ def validate_and_fix_citations(
         re.search(p, response, re.IGNORECASE) for p in not_found_patterns
     )
 
-    # If LLM says not found but we have contexts, REPLACE the response entirely
-    if llm_says_not_found and contexts:
-        context_summaries = []
-        for i, ctx in enumerate(contexts[:3]):  # Use top 3 contexts
-            content = ctx.get("content", "")
-            doc_name = ctx.get("metadata", {}).get("document_name", f"Document {i + 1}")
-            if content:
-                # Clean the content
-                cleaned_content = content.strip()
-                context_summaries.append(f"【{doc_name}】\n{cleaned_content}")
-
-        if context_summaries:
-            # Replace the "not found" response with actual knowledge base content
-            response = f"""Based on the knowledge base documents, here is the relevant information:
-
-{"=" * 60}
-
-{"=" * 60}\n\n""".join(context_summaries)
-            logger.warning(
-                f"LLM said not found but had {len(contexts)} contexts - REPLACED response with KB content"
-            )
+    # Note: Removed the "LLM said not found but had contexts - replace with KB content" logic
+    # This caused poor quality answers by concatenating raw chunks without proper synthesis
+    # Now LLM's response is used directly - if it can't answer, it will say so
 
     # Remove citation patterns
     patterns_to_remove = [
