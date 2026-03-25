@@ -8,6 +8,20 @@ import logging
 from typing import List, Optional, Dict, Any, Generator
 import httpx
 
+# Disable proxy for LLM API calls (SiliconCloud should not use proxy)
+os.environ.pop("http_proxy", None)
+os.environ.pop("https_proxy", None)
+os.environ.pop("HTTP_PROXY", None)
+os.environ.pop("HTTPS_PROXY", None)
+os.environ.pop("all_proxy", None)
+os.environ.pop("ALL_PROXY", None)
+
+# Add SiliconCloud to NO_PROXY
+no_proxy = os.environ.get("no_proxy", "")
+os.environ["no_proxy"] = (
+    f"api.siliconflow.cn,{no_proxy}" if no_proxy else "api.siliconflow.cn"
+)
+
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -273,5 +287,5 @@ Only return JSON, no other content."""
             return parsed
 
     except Exception as e:
-        logger.error(f"Intent classification error: {e}")
+        logger.error(f"Intent classification error: {e}", exc_info=True)
         return {"intent": settings.FALLBACK_INTENT, "confidence": 0.5}
