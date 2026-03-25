@@ -257,11 +257,11 @@ def format_sources(contexts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if doc_id and doc_id not in seen_ids:
             # Get score - prefer rerank_score, then score
             score = ctx.get("rerank_score", ctx.get("score", 0))
-            
+
             # Skip documents with zero/negative score (not relevant)
             if score <= 0:
                 continue
-            
+
             seen_ids.add(doc_id)
             sources.append(
                 {
@@ -276,7 +276,7 @@ def format_sources(contexts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
     # Sort by score descending
     sources.sort(key=lambda x: x.get("score", 0), reverse=True)
-    
+
     return sources
 
 
@@ -648,15 +648,16 @@ async def process_query_streaming(
             response_time = (time.time() - start_time) * 1000
 
             yield f"data: {json.dumps({'event': 'search', 'data': {'count': 0}})}\n\n"
-            yield f"data: {json.dumps({'event': 'done', 'data': {
-                'response': response_text,
-                'intent': intent_name,
-                'confidence': 0.0,
-                'confidence_source': 'no_documents',
-                'sources': [],
-                'status': 'no_intent_documents',
-                'response_time': response_time
-            })}\n\n"
+            done_data = {
+                "response": response_text,
+                "intent": intent_name,
+                "confidence": 0.0,
+                "confidence_source": "no_documents",
+                "sources": [],
+                "status": "no_intent_documents",
+                "response_time": response_time,
+            }
+            yield f"data: {json.dumps({'event': 'done', 'data': done_data})}\n\n"
 
             query_log = QueryLog(
                 query=query,
@@ -700,15 +701,16 @@ async def process_query_streaming(
             response_time = (time.time() - start_time) * 1000
 
             yield f"data: {json.dumps({'event': 'search', 'data': {'count': 0}})}\n\n"
-            yield f"data: {json.dumps({'event': 'done', 'data': {
-                'response': response_text,
-                'intent': intent_name,
-                'confidence': 0.0,
-                'confidence_source': 'no_results',
-                'sources': [],
-                'status': 'no_results',
-                'response_time': response_time
-            })}\n\n"
+            done_data = {
+                "response": response_text,
+                "intent": intent_name,
+                "confidence": 0.0,
+                "confidence_source": "no_results",
+                "sources": [],
+                "status": "no_results",
+                "response_time": response_time,
+            }
+            yield f"data: {json.dumps({'event': 'done', 'data': done_data})}\n\n"
 
             query_log = QueryLog(
                 query=query,
@@ -758,7 +760,9 @@ async def process_query_streaming(
             else:
                 answer_confidence = 0.3
                 answer_confidence_source = "very_low"
-            logger.info(f"Answer confidence: {answer_confidence:.2f} (top_score={top_score:.3f})")
+            logger.info(
+                f"Answer confidence: {answer_confidence:.2f} (top_score={top_score:.3f})"
+            )
 
         # Step 7: Check confidence threshold
         conf_settings = await get_confidence_settings(db)
@@ -770,15 +774,16 @@ async def process_query_streaming(
             status = "low_confidence"
             response_time = (time.time() - start_time) * 1000
 
-            yield f"data: {json.dumps({'event': 'done', 'data': {
-                'response': response_text,
-                'intent': intent_name,
-                'confidence': answer_confidence,
-                'confidence_source': answer_confidence_source,
-                'sources': sources,
-                'status': status,
-                'response_time': response_time
-            })}\n\n"
+            done_data = {
+                "response": response_text,
+                "intent": intent_name,
+                "confidence": answer_confidence,
+                "confidence_source": answer_confidence_source,
+                "sources": sources,
+                "status": status,
+                "response_time": response_time,
+            }
+            yield f"data: {json.dumps({'event': 'done', 'data': done_data})}\n\n"
 
             query_log = QueryLog(
                 query=query,
@@ -825,15 +830,16 @@ async def process_query_streaming(
 
         response_time = (time.time() - start_time) * 1000
 
-        yield f"data: {json.dumps({'event': 'done', 'data': {
-            'response': full_response,
-            'intent': intent_name,
-            'confidence': answer_confidence,
-            'confidence_source': answer_confidence_source,
-            'sources': sources,
-            'response_time': response_time,
-            'status': 'success'
-        })}\n\n"
+        done_data = {
+            "response": full_response,
+            "intent": intent_name,
+            "confidence": answer_confidence,
+            "confidence_source": answer_confidence_source,
+            "sources": sources,
+            "response_time": response_time,
+            "status": "success",
+        }
+        yield f"data: {json.dumps({'event': 'done', 'data': done_data})}\n\n"
 
         # Log query
         query_log = QueryLog(
