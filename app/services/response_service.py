@@ -247,7 +247,7 @@ def format_sources(contexts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         contexts: List of context documents
 
     Returns:
-        Formatted sources
+        Formatted sources (sorted by relevance, only include score > 0)
     """
     sources = []
     seen_ids = set()
@@ -255,6 +255,13 @@ def format_sources(contexts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     for ctx in contexts:
         doc_id = ctx.get("document_id")
         if doc_id and doc_id not in seen_ids:
+            # Get score - prefer rerank_score, then score
+            score = ctx.get("rerank_score", ctx.get("score", 0))
+            
+            # Skip documents with zero/negative score (not relevant)
+            if score <= 0:
+                continue
+            
             seen_ids.add(doc_id)
             sources.append(
                 {
@@ -263,10 +270,13 @@ def format_sources(contexts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                         "document_name", f"Document {doc_id}"
                     ),
                     "content": ctx.get("content", "")[:200],
-                    "score": ctx.get("score", 0),
+                    "score": score,
                 }
             )
 
+    # Sort by score descending
+    sources.sort(key=lambda x: x.get("score", 0), reverse=True)
+    
     return sources
 
 
