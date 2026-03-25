@@ -99,6 +99,8 @@ RRF_K = 60  # RRF parameter for rank fusion
 TOP_K_DOCUMENTS = 6  # Number of documents to retrieve (increased for better context)
 RERANK_TOP_K = 4  # Number of documents after reranking
 
+SKIP_RERANK_CONFIDENCE = float(os.getenv("SKIP_RERANK_CONFIDENCE", "0.9"))  # Skip reranking when intent confidence >= this value
+
 # ============== Document Processing ==============
 
 CHUNK_SIZE = 512  # Text chunk size for vectorization (2x document size for small docs)
