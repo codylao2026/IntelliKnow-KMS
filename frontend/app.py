@@ -471,7 +471,12 @@ elif page == "KB Management":
                     row_cols = st.columns([0.5, 3, 1.5, 1, 1, 1.5, 1.5, 1.5])
 
                     with row_cols[0]:
-                        checked = st.checkbox("", value=is_selected, key=checkbox_key)
+                        checked = st.checkbox(
+                            "",
+                            value=is_selected,
+                            key=checkbox_key,
+                            label_visibility="collapsed",
+                        )
                         if checked:
                             st.session_state.selected_docs.add(doc_id)
                         else:

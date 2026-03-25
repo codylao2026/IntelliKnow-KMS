@@ -146,7 +146,9 @@ async def classify_intent(
 
         # Check if LLM failed - use keyword matching as fallback
         if llm_result.get("error"):
-            logger.warning(f"LLM classification failed: {llm_result.get('error')}, falling back to keyword")
+            logger.warning(
+                f"LLM classification failed: {llm_result.get('error')}, falling back to keyword"
+            )
             if top_kw_intent and top_kw_score > 0:
                 final_intent = top_kw_intent
                 final_confidence = top_kw_score
@@ -157,43 +159,43 @@ async def classify_intent(
                 confidence_source = "fallback"
         else:
             # Step 3: Hierarchical decision
-        final_intent = settings.FALLBACK_INTENT
-        final_confidence = 0.0
-        confidence_source = "fallback"
+            final_intent = settings.FALLBACK_INTENT
+            final_confidence = 0.0
+            confidence_source = "fallback"
 
-        if llm_confidence >= confidence_threshold:
-            # Path A: LLM confidence is sufficient
-            final_intent = llm_intent
-            final_confidence = llm_confidence
-            confidence_source = "llm"
+            if llm_confidence >= confidence_threshold:
+                # Path A: LLM confidence is sufficient
+                final_intent = llm_intent
+                final_confidence = llm_confidence
+                confidence_source = "llm"
 
-        elif top_kw_score >= confidence_threshold:
-            # Path B: Keyword score meets threshold
-            final_intent = top_kw_intent
-            final_confidence = top_kw_score
-            confidence_source = "keyword"
+            elif top_kw_score >= confidence_threshold:
+                # Path B: Keyword score meets threshold
+                final_intent = top_kw_intent
+                final_confidence = top_kw_score
+                confidence_source = "keyword"
 
-        else:
-            # Path C: Weighted fusion (50% LLM + 50% Keyword)
-            llm_w = conf_settings["llm_weight"]
-            kw_w = conf_settings["keyword_weight"]
+            else:
+                # Path C: Weighted fusion (50% LLM + 50% Keyword)
+                llm_w = conf_settings["llm_weight"]
+                kw_w = conf_settings["keyword_weight"]
 
-            intent_scores = {}
-            for intent in intents:
-                score = 0.0
-                if intent["name"] == llm_intent:
-                    score += llm_confidence * llm_w
-                kw_score = keyword_scores.get(intent["name"], 0.0)
-                score += kw_score * kw_w
-                intent_scores[intent["name"]] = score
+                intent_scores = {}
+                for intent in intents:
+                    score = 0.0
+                    if intent["name"] == llm_intent:
+                        score += llm_confidence * llm_w
+                    kw_score = keyword_scores.get(intent["name"], 0.0)
+                    score += kw_score * kw_w
+                    intent_scores[intent["name"]] = score
 
-            if intent_scores:
-                final_intent = max(intent_scores, key=intent_scores.get)
-                final_confidence = intent_scores.get(final_intent, 0.0)
-                confidence_source = "fusion"
+                if intent_scores:
+                    final_intent = max(intent_scores, key=intent_scores.get)
+                    final_confidence = intent_scores.get(final_intent, 0.0)
+                    confidence_source = "fusion"
 
-            if final_confidence > 1.0:
-                final_confidence = 1.0
+                if final_confidence > 1.0:
+                    final_confidence = 1.0
 
         # Find intent ID
         intent_id = None
