@@ -352,21 +352,6 @@ async def process_query(
             f"Query classified as '{intent_name}' with confidence {confidence} [{confidence_source}]"
         )
 
-        # Check if intent classification failed (error in LLM call)
-        intent_error = intent_result.get("error")
-        if intent_error:
-            logger.error(f"Intent classification failed: {intent_error}")
-            return {
-                "query": query,
-                "response": "Sorry, failed to understand your query. Please try again.",
-                "intent": intent_name,
-                "confidence": 0.0,
-                "confidence_source": "error",
-                "sources": [],
-                "response_time": (time.time() - start_time) * 1000,
-                "status": "error",
-            }
-
         # Step 2: Get all document IDs for this intent from database
         valid_doc_ids = []
         has_intent_docs = False  # Default to False - no documents
@@ -632,24 +617,6 @@ async def process_query_streaming(
         intent_id = intent_result["intent_id"]
         confidence = intent_result["confidence"]
         confidence_source = intent_result.get("confidence_source", "unknown")
-
-        # Check if intent classification failed (error in LLM call)
-        intent_error = intent_result.get("error")
-        if intent_error:
-            logger.error(f"Intent classification failed: {intent_error}")
-            confidence_source = "error"
-            # Return early with error message
-            done_data = {
-                "response": "Sorry, failed to understand your query. Please try again.",
-                "intent": intent_name,
-                "confidence": 0.0,
-                "confidence_source": "error",
-                "sources": [],
-                "status": "error",
-                "response_time": (time.time() - start_time) * 1000,
-            }
-            yield f"data: {json.dumps({'event': 'done', 'data': done_data})}\n\n"
-            return
 
         yield f"data: {json.dumps({'event': 'intent', 'data': {'intent': intent_name, 'confidence': confidence, 'source': confidence_source}})}\n\n"
 

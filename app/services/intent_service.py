@@ -144,7 +144,19 @@ async def classify_intent(
         )
         top_kw_score = keyword_scores.get(top_kw_intent, 0.0) if top_kw_intent else 0.0
 
-        # Step 3: Hierarchical decision
+        # Check if LLM failed - use keyword matching as fallback
+        if llm_result.get("error"):
+            logger.warning(f"LLM classification failed: {llm_result.get('error')}, falling back to keyword")
+            if top_kw_intent and top_kw_score > 0:
+                final_intent = top_kw_intent
+                final_confidence = top_kw_score
+                confidence_source = "keyword_fallback"
+            else:
+                final_intent = settings.FALLBACK_INTENT
+                final_confidence = 0.0
+                confidence_source = "fallback"
+        else:
+            # Step 3: Hierarchical decision
         final_intent = settings.FALLBACK_INTENT
         final_confidence = 0.0
         confidence_source = "fallback"
