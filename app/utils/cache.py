@@ -53,12 +53,15 @@ class TTLCache:
                 # Move to end (most recently used)
                 self._cache.move_to_end(key)
                 self._stats["hits"] += 1
+                logger.info(f"Cache HIT: {key[:50]}... (size={len(self._cache)})")
                 return value
             else:
                 # Expired, remove it
                 del self._cache[key]
+                logger.info(f"Cache EXPIRED: {key[:50]}...")
 
         self._stats["misses"] += 1
+        logger.info(f"Cache MISS: {key[:50]}...")
         return None
 
     def set(self, key: str, value: Any, ttl: Optional[int] = None) -> None:

@@ -263,8 +263,9 @@ async def generate_response_from_rag(
         cache_key = make_cache_key(prompt, SYSTEM_PROMPT)
         cached_response = cache.get(cache_key)
         if cached_response is not None:
-            logger.info(f"LLM response cache hit for query: {query[:50]}...")
+            logger.info(f"✅ LLM response cache HIT for query: {query[:50]}...")
             return cached_response
+        logger.info(f"❌ LLM response cache MISS for query: {query[:50]}...")
 
     try:
         if stream:
@@ -286,7 +287,7 @@ async def generate_response_from_rag(
             if cache_key and settings.ENABLE_CACHE:
                 cache = get_llm_response_cache()
                 cache.set(cache_key, response)
-                logger.debug(f"LLM response cached for query: {query[:50]}...")
+                logger.info(f"📦 LLM response CACHED for query: {query[:50]}...")
 
             return response
     except Exception as e:

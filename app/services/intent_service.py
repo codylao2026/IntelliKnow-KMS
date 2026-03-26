@@ -73,8 +73,11 @@ async def get_all_intents(
         cache = get_intent_cache()
         cached_intents = cache.get(_INTENTS_CACHE_KEY)
         if cached_intents is not None:
-            logger.debug("Intent cache hit")
+            logger.info(
+                f"✅ Intent cache HIT - returning {len(cached_intents)} intents from cache"
+            )
             return cached_intents
+        logger.info("❌ Intent cache MISS - fetching from database")
 
     # Fetch from database
     result = await db.execute(select(Intent))
@@ -95,7 +98,9 @@ async def get_all_intents(
     if use_cache and settings.ENABLE_CACHE:
         cache = get_intent_cache()
         cache.set(_INTENTS_CACHE_KEY, intent_list)
-        logger.debug("Intent cache updated")
+        logger.info(
+            f"📦 Intent cache UPDATED - {len(intent_list)} intents (TTL={settings.INTENT_CACHE_TTL}s)"
+        )
 
     return intent_list
 
