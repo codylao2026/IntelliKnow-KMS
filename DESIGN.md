@@ -357,7 +357,7 @@ IntelliKnow-KMS/
 ### AI Models
 - Embeddings: BGE-M3
 - Reranker: BGE-Reranker-v2-M3
-- LLM: Qwen2.5-7B (via SiliconCloud)
+- LLM: Qwen2.5-7B/Qwen2.5-14B (via SiliconCloud)
 
 ### Frontend
 - Streamlit
