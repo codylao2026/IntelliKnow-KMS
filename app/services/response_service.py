@@ -187,12 +187,21 @@ def validate_and_fix_citations(
         response = re.sub(r"\s+", " ", response)
         response = re.sub(r"\s*,\s*", ", ", response)
 
-    # Step 5: Check if LLM says it couldn't find info (DISABLED - too aggressive)
-    # This was causing false positives where LLM would say not found even with good context
-    # Now we trust the LLM's response and keep sources regardless
-    llm_says_not_found = False
+    # Step 5: Check if LLM says it couldn't find info
+    # Note: Keep sources visible even if LLM says "not found" - user should see search results
+    not_found_patterns = [
+        r"could not find",
+        r"no[t ]*relevant",
+        r"do not have.*information",
+        r"could[n\']*t find.*information",
+    ]
 
-    # Don't clear citations even if LLM says not found - let it show sources anyway
+    llm_says_not_found = any(
+        re.search(p, response, re.IGNORECASE) for p in not_found_patterns
+    )
+
+    if llm_says_not_found:
+        logger.info("LLM indicated not found - will log but keep sources visible")
 
     # Step 6: Remove unwanted patterns but keep [docN] citations
     doc_names_to_remove = []
@@ -311,21 +320,6 @@ async def generate_response_from_rag(
 def format_sources(
     contexts: List[Dict[str, Any]], filter_doc_ids: Optional[List[Any]] = None
 ) -> List[Dict[str, Any]]:
-    """
-    Format source documents for response
-
-    Args:
-        contexts: List of context documents
-        filter_doc_ids: Optional list of doc_ids to include. If provided, only these docs are returned.
-
-    Returns:
-        Formatted sources (sorted by relevance, only include score > 0)
-    """
-    sources = []
-    seen_ids = set()
-
-    # If filter_doc_ids provided, convert to set for O(1) lookup
-    filter_set = set(filter_doc_ids) if filter_doc_ids else None
     """
     Format source documents for response
 
