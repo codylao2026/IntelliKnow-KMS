@@ -457,6 +457,26 @@ async def rebuild_vector_store_from_db(db_session):
 
     logger.info("🔄 Starting vector store rebuild from database...")
 
+    # Delete old index files first to ensure clean rebuild
+    import shutil
+
+    faiss_dir = VECTOR_STORE_PATH
+    if faiss_dir.exists():
+        shutil.rmtree(faiss_dir)
+        logger.info("Deleted old FAISS index directory")
+
+    # Recreate directory
+    faiss_dir.mkdir(parents=True, exist_ok=True)
+
+    # Also delete BM25 index
+    if BM25_STORE_PATH.exists():
+        BM25_STORE_PATH.unlink()
+        logger.info("Deleted old BM25 index")
+
+    if METADATA_PATH.exists():
+        METADATA_PATH.unlink()
+        logger.info("Deleted old metadata")
+
     # Create new vector store
     _vector_store = VectorStore()
     _vector_store.faiss_store = None
