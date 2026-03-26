@@ -406,11 +406,19 @@ _vector_store: Optional[VectorStore] = None
 
 
 def get_vector_store() -> VectorStore:
-    """Get singleton vector store instance"""
+    """Get singleton vector store instance (cached in memory)"""
     global _vector_store
     if _vector_store is None:
+        logger.info("🔄 Vector store: Loading from disk (first access)...")
         _vector_store = VectorStore()
         _vector_store._load_or_create()
+        logger.info(
+            f"✅ Vector store LOADED: FAISS={_vector_store.faiss_store.index.ntotal if _vector_store.faiss_store else 0} vectors, BM25={len(_vector_store.documents)} docs"
+        )
+    else:
+        logger.info(
+            f"✅ Vector store cache HIT (in memory): FAISS={_vector_store.faiss_store.index.ntotal if _vector_store.faiss_store else 0} vectors"
+        )
     return _vector_store
 
 
