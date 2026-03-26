@@ -258,23 +258,45 @@ async def generate_response_from_rag(
 
     # Check LLM response cache (only for non-streaming)
     cache_key = None
-    if not stream and use_cache and settings.ENABLE_CACHE:
+    if use_cache and settings.ENABLE_CACHE:
         cache = get_llm_response_cache()
         cache_key = make_cache_key(prompt, SYSTEM_PROMPT)
         cached_response = cache.get(cache_key)
         if cached_response is not None:
             logger.info(f"✅ LLM response cache HIT for query: {query[:50]}...")
-            return cached_response
+
+            if stream:
+                # Stream cached response token by token
+                async def stream_cached():
+                    words = cached_response.split()
+                    for i, word in enumerate(words):
+                        token = word + (" " if i < len(words) - 1 else "")
+                        yield f"data: {json.dumps({'token': token})}\n\n"
+                        await asyncio.sleep(0.02)  # Simulate streaming delay
+                    yield f"data: {json.dumps({'done': True})}\n\n"
+
+                return stream_cached()
+            else:
+                return cached_response
         logger.info(f"❌ LLM response cache MISS for query: {query[:50]}...")
 
     try:
         if stream:
 
             async def stream_generator():
+                full_response = ""
                 async for token in generate_response_stream(
                     prompt=prompt, system_prompt=SYSTEM_PROMPT, temperature=0.3
                 ):
+                    full_response += token
                     yield f"data: {json.dumps({'token': token})}\n\n"
+
+                # Cache the complete response
+                if cache_key and settings.ENABLE_CACHE:
+                    cache = get_llm_response_cache()
+                    cache.set(cache_key, full_response)
+                    logger.info(f"📦 LLM response CACHED for query: {query[:50]}...")
+
                 yield f"data: {json.dumps({'done': True})}\n\n"
 
             return stream_generator()

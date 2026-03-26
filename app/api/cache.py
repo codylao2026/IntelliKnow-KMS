@@ -2,9 +2,11 @@
 Cache management API endpoints
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from typing import Dict, Any
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.utils.database import get_db
 from app.utils.cache import get_intent_cache, get_llm_response_cache
 from app.utils.vectorstore import get_vector_store
 from config import settings
@@ -95,4 +97,19 @@ async def reload_vector_store() -> Dict[str, str]:
     from app.utils.vectorstore import rebuild_vector_store
 
     rebuild_vector_store()
-    return {"status": "ok", "message": "Vector store reload scheduled"}
+    return {
+        "status": "ok",
+        "message": "Vector store reset, will reload from disk on next access",
+    }
+
+
+@router.post("/rebuild/vectorstore")
+async def rebuild_vector_store_from_db(db: AsyncSession = Depends(get_db)):
+    """Rebuild vector store from database documents (re-index all)"""
+    from app.utils.vectorstore import rebuild_vector_store_from_db as rebuild_fn
+
+    try:
+        await rebuild_fn(db)
+        return {"status": "ok", "message": "Vector store rebuilt from database"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Rebuild failed: {str(e)}")

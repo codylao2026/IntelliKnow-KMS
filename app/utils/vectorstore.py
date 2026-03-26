@@ -420,3 +420,90 @@ def rebuild_vector_store():
     _vector_store = VectorStore()
     # Will be populated from documents in database
     logger.info("Vector store reset")
+
+
+async def rebuild_vector_store_from_db(db_session):
+    """
+    Rebuild vector store from database documents
+
+    Args:
+        db_session: SQLAlchemy async session
+    """
+    global _vector_store
+
+    from sqlalchemy import select
+    from app.models.database import Document, DocumentChunk
+    from langchain_core.documents import Document as LangchainDocument
+
+    logger.info("🔄 Starting vector store rebuild from database...")
+
+    # Create new vector store
+    _vector_store = VectorStore()
+    _vector_store.faiss_store = None
+    _vector_store.bm25 = None
+    _vector_store.documents = []
+    _vector_store.doc_id_map = {}
+
+    # Fetch all document chunks from database
+    result = await db_session.execute(
+        select(DocumentChunk, Document)
+        .join(Document, DocumentChunk.document_id == Document.id)
+        .where(Document.status == "indexed")
+    )
+    chunks = result.all()
+
+    if not chunks:
+        logger.warning("No document chunks found in database")
+        return
+
+    logger.info(f"Found {len(chunks)} chunks to index")
+
+    # Prepare texts and metadata
+    texts = []
+    metadatas = []
+    doc_ids = []
+
+    for chunk, doc in chunks:
+        texts.append(chunk.content)
+        metadatas.append(
+            {
+                "document_id": doc.id,
+                "intent_id": doc.intent_id,
+                "document_name": doc.name,
+            }
+        )
+        doc_ids.append(doc.id)
+
+    # Build FAISS index
+    try:
+        _vector_store.faiss_store = FAISS.from_texts(
+            texts, _vector_store._get_embedding_function(), metadatas=metadatas
+        )
+        logger.info(f"✅ FAISS index built with {len(texts)} vectors")
+    except Exception as e:
+        logger.error(f"FAISS index build failed: {e}")
+        raise
+
+    # Build BM25 index
+    tokenized_texts = [text.split() for text in texts]
+    _vector_store.bm25 = BM25Okapi(tokenized_texts)
+    logger.info(f"✅ BM25 index built with {len(texts)} documents")
+
+    # Build documents list
+    for i, (chunk, doc) in enumerate(chunks):
+        _vector_store.documents.append(
+            LangchainDocument(
+                page_content=chunk.content,
+                metadata={
+                    "document_id": doc.id,
+                    "intent_id": doc.intent_id,
+                    "document_name": doc.name,
+                },
+            )
+        )
+        _vector_store.doc_id_map[i] = doc.id
+
+    # Save to disk
+    _vector_store._save()
+
+    logger.info(f"✅ Vector store rebuild complete: {len(texts)} chunks indexed")
