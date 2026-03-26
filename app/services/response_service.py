@@ -187,21 +187,12 @@ def validate_and_fix_citations(
         response = re.sub(r"\s+", " ", response)
         response = re.sub(r"\s*,\s*", ", ", response)
 
-    # Step 5: Check if LLM says it couldn't find info
-    not_found_patterns = [
-        r"could not find",
-        r"no[t ]*relevant",
-        r"do not have.*information",
-        r"could[n\']*t find.*information",
-    ]
+    # Step 5: Check if LLM says it couldn't find info (DISABLED - too aggressive)
+    # This was causing false positives where LLM would say not found even with good context
+    # Now we trust the LLM's response and keep sources regardless
+    llm_says_not_found = False
 
-    llm_says_not_found = any(
-        re.search(p, response, re.IGNORECASE) for p in not_found_patterns
-    )
-
-    if llm_says_not_found:
-        logger.info("LLM indicated not found - will adjust confidence")
-        cited_doc_ids = []  # Clear citations if LLM says not found
+    # Don't clear citations even if LLM says not found - let it show sources anyway
 
     # Step 6: Remove unwanted patterns but keep [docN] citations
     doc_names_to_remove = []
@@ -644,23 +635,8 @@ async def process_query(
                 str(response_text), reranked_results, query
             )
 
-            # Check if LLM couldn't answer - lower confidence and clear sources
-            llm_not_found = (
-                "could not found" in response_text.lower()
-                or "no relevant" in response_text.lower()
-            )
-
-            # If LLM said not found, override confidence and clear sources
-            if llm_not_found:
-                answer_confidence = 0.3
-                answer_confidence_source = "llm_not_found"
-                sources = []  # Clear sources since LLM couldn't find answer
-                logger.info(
-                    f"LLM couldn't answer - set confidence to {answer_confidence}, cleared sources"
-                )
-            else:
-                # Step 10: Format sources - filter to only include cited documents
-                sources = format_sources(reranked_results, filter_doc_ids=cited_doc_ids)
+            # Step 10: Format sources - always show sources, don't clear based on LLM response
+            sources = format_sources(reranked_results, filter_doc_ids=cited_doc_ids)
             response_time = (time.time() - start_time) * 1000
             status = "success"
 
@@ -968,23 +944,8 @@ async def process_query_streaming(
             full_response, reranked_results, query
         )
 
-        # Check if LLM couldn't answer - lower confidence and clear sources
-        llm_not_found = (
-            "could not find" in full_response.lower()
-            or "no relevant" in full_response.lower()
-        )
-
-        # If LLM said not found, override confidence and clear sources
-        if llm_not_found:
-            answer_confidence = 0.3
-            answer_confidence_source = "llm_not_found"
-            sources = []  # Clear sources since LLM couldn't find answer
-            logger.info(
-                f"LLM couldn't answer - set confidence to {answer_confidence}, cleared sources"
-            )
-        else:
-            # Update sources to only include cited documents
-            sources = format_sources(reranked_results, filter_doc_ids=cited_doc_ids)
+        # Always show sources - don't clear based on LLM response
+        sources = format_sources(reranked_results, filter_doc_ids=cited_doc_ids)
 
         # Send corrected response
         yield f"data: {json.dumps({'event': 'corrected_response', 'data': {'response': full_response}})}\n\n"
