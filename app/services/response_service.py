@@ -13,6 +13,7 @@ from app.models.database import QueryLog
 from app.services.intent_service import classify_intent, get_confidence_settings
 from app.services.search_service import search_documents, rerank_results, rewrite_query
 from app.utils.llm import generate_response, generate_response_stream
+from app.utils.cache import get_llm_response_cache, make_cache_key
 from config import settings
 
 QUERY_REWRITE_WORD_THRESHOLD = 5
@@ -125,7 +126,7 @@ def validate_and_fix_citations(
 ) -> tuple:
     """
     Validate citations in response and map to actual doc_ids.
-    
+
     Ensures response and sources are aligned - only returns sources that are actually cited.
 
     Args:
@@ -139,44 +140,53 @@ def validate_and_fix_citations(
         - cited_doc_ids: List of actual doc_ids that were cited in the response
     """
     import re
-    
+
     num_docs = len(contexts) if contexts else 0
     cited_doc_ids = []
-    
+
     if num_docs > 0:
         # Step 1: Build mapping docN -> actual doc_id
         doc_num_to_doc_id = {}
         for i, ctx in enumerate(contexts):
             doc_num = i + 1  # doc1, doc2, doc3...
-            actual_doc_id = ctx.get("document_id") or ctx.get("doc_id") or ctx.get("metadata", {}).get("doc_id") or ctx.get("metadata", {}).get("document_id")
+            actual_doc_id = (
+                ctx.get("document_id")
+                or ctx.get("doc_id")
+                or ctx.get("metadata", {}).get("doc_id")
+                or ctx.get("metadata", {}).get("document_id")
+            )
             if actual_doc_id:
                 doc_num_to_doc_id[doc_num] = actual_doc_id
-        
+
         logger.info(f"Citation mapping: {doc_num_to_doc_id}")
-        
+
         # Step 2: Extract all [docN] citations from response
         cited_doc_nums = set(re.findall(r"\[doc(\d+)\]", response, re.IGNORECASE))
         logger.info(f"Found citations in response: {cited_doc_nums}")
-        
+
         # Step 3: Validate and map to actual doc_ids
         valid_cited_doc_nums = set()
         for doc_num_str in cited_doc_nums:
             doc_num = int(doc_num_str)
             if doc_num > num_docs:
                 # Remove invalid citation (doc number exceeds available docs)
-                response = re.sub(rf"\[doc{doc_num_str}\]", "", response, flags=re.IGNORECASE)
-                logger.warning(f"Removed invalid citation [doc{doc_num_str}] - only have {num_docs} docs")
+                response = re.sub(
+                    rf"\[doc{doc_num_str}\]", "", response, flags=re.IGNORECASE
+                )
+                logger.warning(
+                    f"Removed invalid citation [doc{doc_num_str}] - only have {num_docs} docs"
+                )
             elif doc_num in doc_num_to_doc_id:
                 # Valid citation - keep it and record the actual doc_id
                 valid_cited_doc_nums.add(doc_num)
                 actual_id = doc_num_to_doc_id[doc_num]
                 if actual_id not in cited_doc_ids:
                     cited_doc_ids.append(actual_id)
-        
+
         # Step 4: Clean up extra whitespace
         response = re.sub(r"\s+", " ", response)
         response = re.sub(r"\s*,\s*", ", ", response)
-    
+
     # Step 5: Check if LLM says it couldn't find info
     not_found_patterns = [
         r"could not find",
@@ -184,15 +194,15 @@ def validate_and_fix_citations(
         r"do not have.*information",
         r"could[n\']*t find.*information",
     ]
-    
+
     llm_says_not_found = any(
         re.search(p, response, re.IGNORECASE) for p in not_found_patterns
     )
-    
+
     if llm_says_not_found:
         logger.info("LLM indicated not found - will adjust confidence")
         cited_doc_ids = []  # Clear citations if LLM says not found
-    
+
     # Step 6: Remove unwanted patterns but keep [docN] citations
     doc_names_to_remove = []
     if contexts:
@@ -200,24 +210,24 @@ def validate_and_fix_citations(
             doc_name = ctx.get("metadata", {}).get("document_name", "")
             if doc_name:
                 doc_names_to_remove.append(re.escape(doc_name))
-    
+
     patterns_to_remove = [
         r"Sources?:\s*\[?[^\]]*\]?",
         r"References?:\s*\[?[^\]]*\]?",
     ]
-    
+
     for doc_name_pattern in doc_names_to_remove:
         if doc_name_pattern:
             patterns_to_remove.append(r"\[\s*" + doc_name_pattern + r"\s*\]")
-    
+
     for pattern in patterns_to_remove:
         response = re.sub(pattern, "", response, flags=re.IGNORECASE)
-    
+
     # Clean up extra whitespace
     response = re.sub(r"\s+", " ", response).strip()
-    
+
     logger.info(f"Final cited_doc_ids: {cited_doc_ids}")
-    
+
     return response, cited_doc_ids
 
 
@@ -226,6 +236,7 @@ async def generate_response_from_rag(
     contexts: List[Dict[str, Any]],
     stream: bool = False,
     max_response_tokens: int = 500,  # Limit response length for speed
+    use_cache: bool = True,
 ):
     """
     Generate response using RAG
@@ -235,6 +246,7 @@ async def generate_response_from_rag(
         contexts: Retrieved contexts
         stream: Enable streaming
         max_response_tokens: Maximum tokens in response (lower = faster)
+        use_cache: Enable LLM response caching
 
     Returns:
         Generated response (str) or async generator if streaming
@@ -243,6 +255,16 @@ async def generate_response_from_rag(
         return "Sorry, no relevant information found in the knowledge base. Please try a different question or contact the administrator."
 
     prompt = build_rag_prompt(query, contexts)
+
+    # Check LLM response cache (only for non-streaming)
+    cache_key = None
+    if not stream and use_cache and settings.ENABLE_CACHE:
+        cache = get_llm_response_cache()
+        cache_key = make_cache_key(prompt, SYSTEM_PROMPT)
+        cached_response = cache.get(cache_key)
+        if cached_response is not None:
+            logger.info(f"LLM response cache hit for query: {query[:50]}...")
+            return cached_response
 
     try:
         if stream:
@@ -256,17 +278,24 @@ async def generate_response_from_rag(
 
             return stream_generator()
         else:
-            return await generate_response(
+            response = await generate_response(
                 prompt=prompt, system_prompt=SYSTEM_PROMPT, temperature=0.3
             )
+
+            # Cache the response
+            if cache_key and settings.ENABLE_CACHE:
+                cache = get_llm_response_cache()
+                cache.set(cache_key, response)
+                logger.debug(f"LLM response cached for query: {query[:50]}...")
+
+            return response
     except Exception as e:
         logger.error(f"Response generation error: {e}")
         return "Sorry, an error occurred while generating the response. Please try again later."
 
 
 def format_sources(
-    contexts: List[Dict[str, Any]], 
-    filter_doc_ids: Optional[List[Any]] = None
+    contexts: List[Dict[str, Any]], filter_doc_ids: Optional[List[Any]] = None
 ) -> List[Dict[str, Any]]:
     """
     Format source documents for response
@@ -280,7 +309,7 @@ def format_sources(
     """
     sources = []
     seen_ids = set()
-    
+
     # If filter_doc_ids provided, convert to set for O(1) lookup
     filter_set = set(filter_doc_ids) if filter_doc_ids else None
     """
@@ -295,7 +324,7 @@ def format_sources(
     """
     sources = []
     seen_ids = set()
-    
+
     # If filter_doc_ids provided, convert to set for O(1) lookup
     filter_set = set(filter_doc_ids) if filter_doc_ids else None
 
@@ -303,7 +332,7 @@ def format_sources(
         doc_id = ctx.get("document_id")
         # Get score - prefer rerank_score, then score
         score = ctx.get("rerank_score", ctx.get("score"))
-        
+
         # If filtering by doc_ids, skip docs not in the list
         if filter_set is not None:
             if doc_id not in filter_set:
@@ -330,7 +359,9 @@ def format_sources(
     # Sort by score descending
     sources.sort(key=lambda x: x.get("score", 0), reverse=True)
 
-    logger.info(f"format_sources: returning {len(sources)} sources (filtered: {filter_set is not None})")
+    logger.info(
+        f"format_sources: returning {len(sources)} sources (filtered: {filter_set is not None})"
+    )
     return sources
 
 
@@ -531,7 +562,9 @@ async def process_query(
         # Step 5: Rerank if we have results (skip if confidence >= threshold or few results)
         if confidence >= settings.SKIP_RERANK_CONFIDENCE:
             reranked_results = search_results[: settings.RERANK_TOP_K]
-            logger.info(f"Skipping reranking (confidence {confidence:.2f} >= {settings.SKIP_RERANK_CONFIDENCE})")
+            logger.info(
+                f"Skipping reranking (confidence {confidence:.2f} >= {settings.SKIP_RERANK_CONFIDENCE})"
+            )
         elif len(search_results) <= 2:
             reranked_results = search_results[: settings.RERANK_TOP_K]
             logger.info(f"Skipping reranking (only {len(search_results)} results)")

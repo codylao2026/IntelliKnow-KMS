@@ -99,7 +99,22 @@ RRF_K = 60  # RRF parameter for rank fusion
 TOP_K_DOCUMENTS = 6  # Number of documents to retrieve (increased for better context)
 RERANK_TOP_K = 4  # Number of documents after reranking
 
-SKIP_RERANK_CONFIDENCE = float(os.getenv("SKIP_RERANK_CONFIDENCE", "0.9"))  # Skip reranking when intent confidence >= this value
+SKIP_RERANK_CONFIDENCE = float(
+    os.getenv("SKIP_RERANK_CONFIDENCE", "0.9")
+)  # Skip reranking when intent confidence >= this value
+
+# ============== Cache Settings ==============
+
+ENABLE_CACHE = os.getenv("ENABLE_CACHE", "true").lower() == "true"
+INTENT_CACHE_TTL = int(
+    os.getenv("INTENT_CACHE_TTL", "300")
+)  # Intent cache TTL in seconds (default: 5 min)
+LLM_RESPONSE_CACHE_TTL = int(
+    os.getenv("LLM_RESPONSE_CACHE_TTL", "600")
+)  # LLM response cache TTL (default: 10 min)
+LLM_RESPONSE_CACHE_MAX_SIZE = int(
+    os.getenv("LLM_RESPONSE_CACHE_MAX_SIZE", "1000")
+)  # Max cache entries
 
 # ============== Document Processing ==============
 

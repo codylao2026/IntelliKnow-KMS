@@ -53,6 +53,7 @@ async def lifespan(app: FastAPI):
         telegram = get_telegram_client()
         if telegram.is_configured():
             import threading
+
             thread = threading.Thread(target=telegram.start, daemon=True)
             thread.start()
             logger.info("✅ Telegram 服务已启动")
@@ -105,7 +106,7 @@ async def health_check():
 
 
 # API routes
-from app.api import documents, intents, query, analytics, webhooks, credentials
+from app.api import documents, intents, query, analytics, webhooks, credentials, cache
 
 app.include_router(documents.router, prefix="/api/documents", tags=["Documents"])
 app.include_router(intents.router, prefix="/api/intents", tags=["Intents"])
@@ -113,6 +114,7 @@ app.include_router(query.router, prefix="/api/query", tags=["Query"])
 app.include_router(analytics.router, prefix="/api/analytics", tags=["Analytics"])
 app.include_router(webhooks.router, prefix="/api", tags=["Webhooks"])
 app.include_router(credentials.router, prefix="/api/credentials", tags=["Credentials"])
+app.include_router(cache.router, tags=["Cache"])
 
 
 if __name__ == "__main__":

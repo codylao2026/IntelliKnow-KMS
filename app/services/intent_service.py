@@ -9,9 +9,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.database import Intent, Config
 from app.utils.llm import classify_intent as llm_classify_intent
+from app.utils.cache import get_intent_cache
 from config import settings
 
 logger = logging.getLogger(__name__)
+
+# Cache key for all intents
+_INTENTS_CACHE_KEY = "all_intents"
 
 
 async def get_confidence_settings(db: AsyncSession) -> Dict[str, float]:
@@ -60,12 +64,23 @@ async def save_confidence_settings(
     return True
 
 
-async def get_all_intents(db: AsyncSession) -> List[Dict[str, Any]]:
-    """Get all intents from database"""
+async def get_all_intents(
+    db: AsyncSession, use_cache: bool = True
+) -> List[Dict[str, Any]]:
+    """Get all intents from database (with caching)"""
+    # Check cache first
+    if use_cache and settings.ENABLE_CACHE:
+        cache = get_intent_cache()
+        cached_intents = cache.get(_INTENTS_CACHE_KEY)
+        if cached_intents is not None:
+            logger.debug("Intent cache hit")
+            return cached_intents
+
+    # Fetch from database
     result = await db.execute(select(Intent))
     intents = result.scalars().all()
 
-    return [
+    intent_list = [
         {
             "id": intent.id,
             "name": intent.name,
@@ -75,6 +90,22 @@ async def get_all_intents(db: AsyncSession) -> List[Dict[str, Any]]:
         }
         for intent in intents
     ]
+
+    # Update cache
+    if use_cache and settings.ENABLE_CACHE:
+        cache = get_intent_cache()
+        cache.set(_INTENTS_CACHE_KEY, intent_list)
+        logger.debug("Intent cache updated")
+
+    return intent_list
+
+
+def invalidate_intent_cache():
+    """Invalidate the intents cache (call after intent updates)"""
+    if settings.ENABLE_CACHE:
+        cache = get_intent_cache()
+        cache.delete(_INTENTS_CACHE_KEY)
+        logger.info("Intent cache invalidated")
 
 
 async def classify_intent(
