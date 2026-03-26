@@ -105,7 +105,7 @@ SKIP_RERANK_CONFIDENCE = float(
 
 # ============== Cache Settings ==============
 
-ENABLE_CACHE = os.getenv("ENABLE_CACHE", "false").lower() == "true"
+ENABLE_CACHE = os.getenv("ENABLE_CACHE", "true").lower() == "true"
 INTENT_CACHE_TTL = int(
     os.getenv("INTENT_CACHE_TTL", "86400")
 )  # Intent cache TTL in seconds (default: 24 hours)
@@ -118,7 +118,7 @@ LLM_RESPONSE_CACHE_MAX_SIZE = int(
 
 # ============== Document Processing ==============
 
-CHUNK_SIZE = 512  # Text chunk size for vectorization (2x document size for small docs)
+CHUNK_SIZE = 800  # Text chunk size for vectorization (2x document size for small docs)
 CHUNK_OVERLAP = 50  # Overlap between chunks
 
 # ============== Frontend Integration ==============
