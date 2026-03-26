@@ -105,7 +105,7 @@ SKIP_RERANK_CONFIDENCE = float(
 
 # ============== Cache Settings ==============
 
-ENABLE_CACHE = os.getenv("ENABLE_CACHE", "true").lower() == "true"
+ENABLE_CACHE = os.getenv("ENABLE_CACHE", "false").lower() == "true"
 INTENT_CACHE_TTL = int(
     os.getenv("INTENT_CACHE_TTL", "86400")
 )  # Intent cache TTL in seconds (default: 24 hours)
