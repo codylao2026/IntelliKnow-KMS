@@ -107,13 +107,13 @@ SKIP_RERANK_CONFIDENCE = float(
 
 ENABLE_CACHE = os.getenv("ENABLE_CACHE", "true").lower() == "true"
 INTENT_CACHE_TTL = int(
-    os.getenv("INTENT_CACHE_TTL", "300")
-)  # Intent cache TTL in seconds (default: 5 min)
+    os.getenv("INTENT_CACHE_TTL", "86400")
+)  # Intent cache TTL in seconds (default: 24 hours)
 LLM_RESPONSE_CACHE_TTL = int(
-    os.getenv("LLM_RESPONSE_CACHE_TTL", "600")
-)  # LLM response cache TTL (default: 10 min)
+    os.getenv("LLM_RESPONSE_CACHE_TTL", "86400")
+)  # LLM response cache TTL (default: 24 hours)
 LLM_RESPONSE_CACHE_MAX_SIZE = int(
-    os.getenv("LLM_RESPONSE_CACHE_MAX_SIZE", "1000")
+    os.getenv("LLM_RESPONSE_CACHE_MAX_SIZE", "10000")
 )  # Max cache entries
 
 # ============== Document Processing ==============
