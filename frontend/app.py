@@ -1942,17 +1942,6 @@ elif page == "Query":
                                                 conf = intent_info.get("confidence", 0)
                                                 st.metric("Confidence", f"{conf:.1%}")
                                             with col3:
-                                                source = intent_info.get(
-                                                    "source", "unknown"
-                                                )
-                                                source_display = {
-                                                    "llm": "🤖 LLM",
-                                                    "keyword": "🔑 Keyword",
-                                                    "fusion": "⚖️ Fusion",
-                                                    "hint": "💡 Hint",
-                                                }.get(source, source)
-                                                st.metric("Source", source_display)
-                                            with col4:
                                                 st.metric(
                                                     "Response Time",
                                                     f"{response_time:.0f}ms",
