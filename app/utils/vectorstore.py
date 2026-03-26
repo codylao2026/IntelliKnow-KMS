@@ -300,9 +300,14 @@ class VectorStore:
             max_rrf = max(rrf_scores.values()) if rrf_scores else 1.0
             normalized_score = score / max_rrf if max_rrf > 0 else 0
 
+            # Use doc_id_map for consistent document_id (FAISS metadata may be stale)
+            actual_doc_id = self.doc_id_map.get(
+                str(doc_idx), doc.metadata.get("document_id")
+            )
+
             results.append(
                 {
-                    "document_id": doc.metadata.get("document_id"),
+                    "document_id": actual_doc_id,
                     "intent_id": doc_intent_id,
                     "content": doc.page_content,
                     "score": normalized_score,
