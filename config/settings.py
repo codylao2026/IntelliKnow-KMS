@@ -61,8 +61,8 @@ FALLBACK_INTENT = "General"
 
 # Weighted fusion for intent classification
 INTENT_LLM_WEIGHT = 0.7  # Weight for LLM classification (0-1)
-INTENT_KEYWORD_WEIGHT = 0.3  # Weight for keyword matching (0-1)
-INTENT_KEYWORD_THRESHOLD = 0.3  # Minimum keyword score to use keyword result
+INTENT_KEYWORD_WEIGHT = 0.5  # Weight for keyword matching (0-1)
+INTENT_KEYWORD_THRESHOLD = 0.5  # Minimum keyword score to use keyword result
 
 DEFAULT_INTENTS = [
     {
