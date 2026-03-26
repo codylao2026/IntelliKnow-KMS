@@ -43,8 +43,8 @@ SILICONCLOUD_BASE_URL = "https://api.siliconflow.cn/v1"
 # Model configs
 EMBEDDING_MODEL = "BAAI/bge-m3"
 RERANK_MODEL = "BAAI/bge-reranker-v2-m3"
-LLM_MODEL = "Qwen/Qwen2.5-7B-Instruct"  # Fast model for response generation
-INTENT_MODEL = "Qwen/Qwen2.5-7B-Instruct"
+LLM_MODEL = "Qwen2.5-14B-Instruct"  
+INTENT_MODEL = "Qwen/Qwen2.5-7B-Instruct" 
 
 # ============== Azure OpenAI (生产环境) ==============
 
@@ -92,7 +92,7 @@ DEFAULT_INTENTS = [
 
 # ============== Search Settings ==============
 
-HYBRID_SEARCH_WEIGHTS = {"bm25": 0.3, "vector": 0.7}
+HYBRID_SEARCH_WEIGHTS = {"bm25": 0.5, "vector": 0.5}
 
 RRF_K = 60  # RRF parameter for rank fusion
 
