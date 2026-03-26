@@ -440,8 +440,9 @@ async def rebuild_vector_store_from_db(db_session):
     global _vector_store
 
     from sqlalchemy import select
-    from app.models.database import Document, DocumentChunk
+    from app.models.database import Document
     from langchain_core.documents import Document as LangchainDocument
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
 
     logger.info("🔄 Starting vector store rebuild from database...")
 
@@ -452,66 +453,79 @@ async def rebuild_vector_store_from_db(db_session):
     _vector_store.documents = []
     _vector_store.doc_id_map = {}
 
-    # Fetch all document chunks from database
+    # Fetch all indexed documents from database
     result = await db_session.execute(
-        select(DocumentChunk, Document)
-        .join(Document, DocumentChunk.document_id == Document.id)
-        .where(Document.status == "indexed")
+        select(Document).where(Document.status == "completed")
     )
-    chunks = result.all()
+    documents = result.scalars().all()
 
-    if not chunks:
-        logger.warning("No document chunks found in database")
+    if not documents:
+        logger.warning("No completed documents found in database")
         return
 
-    logger.info(f"Found {len(chunks)} chunks to index")
+    logger.info(f"Found {len(documents)} documents to index")
+
+    # Text splitter for chunking
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=settings.CHUNK_SIZE,
+        chunk_overlap=settings.CHUNK_OVERLAP,
+    )
 
     # Prepare texts and metadata
-    texts = []
-    metadatas = []
-    doc_ids = []
+    all_texts = []
+    all_metadatas = []
 
-    for chunk, doc in chunks:
-        texts.append(chunk.content)
-        metadatas.append(
-            {
-                "document_id": doc.id,
-                "intent_id": doc.intent_id,
-                "document_name": doc.name,
-            }
-        )
-        doc_ids.append(doc.id)
+    for doc in documents:
+        if not doc.content:
+            logger.warning(f"Document {doc.id} has no content, skipping")
+            continue
+
+        # Split document into chunks
+        chunks = text_splitter.split_text(doc.content)
+
+        for chunk in chunks:
+            all_texts.append(chunk)
+            all_metadatas.append(
+                {
+                    "document_id": doc.id,
+                    "intent_id": doc.intent_id,
+                    "document_name": doc.name,
+                }
+            )
+
+    if not all_texts:
+        logger.warning("No text chunks extracted from documents")
+        return
+
+    logger.info(f"Extracted {len(all_texts)} chunks from {len(documents)} documents")
 
     # Build FAISS index
     try:
         _vector_store.faiss_store = FAISS.from_texts(
-            texts, _vector_store._get_embedding_function(), metadatas=metadatas
+            all_texts, _vector_store._get_embedding_function(), metadatas=all_metadatas
         )
-        logger.info(f"✅ FAISS index built with {len(texts)} vectors")
+        logger.info(f"✅ FAISS index built with {len(all_texts)} vectors")
     except Exception as e:
         logger.error(f"FAISS index build failed: {e}")
         raise
 
     # Build BM25 index
-    tokenized_texts = [text.split() for text in texts]
+    tokenized_texts = [text.split() for text in all_texts]
     _vector_store.bm25 = BM25Okapi(tokenized_texts)
-    logger.info(f"✅ BM25 index built with {len(texts)} documents")
+    logger.info(f"✅ BM25 index built with {len(all_texts)} chunks")
 
-    # Build documents list
-    for i, (chunk, doc) in enumerate(chunks):
+    # Build documents list and doc_id_map
+    for i, text in enumerate(all_texts):
+        meta = all_metadatas[i]
         _vector_store.documents.append(
             LangchainDocument(
-                page_content=chunk.content,
-                metadata={
-                    "document_id": doc.id,
-                    "intent_id": doc.intent_id,
-                    "document_name": doc.name,
-                },
+                page_content=text,
+                metadata=meta,
             )
         )
-        _vector_store.doc_id_map[i] = doc.id
+        _vector_store.doc_id_map[i] = meta["document_id"]
 
     # Save to disk
     _vector_store._save()
 
-    logger.info(f"✅ Vector store rebuild complete: {len(texts)} chunks indexed")
+    logger.info(f"✅ Vector store rebuild complete: {len(all_texts)} chunks indexed")
