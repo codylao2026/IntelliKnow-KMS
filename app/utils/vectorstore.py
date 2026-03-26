@@ -232,39 +232,45 @@ class VectorStore:
             f"BM25 returned {len(bm25_top_indices)} results with non-zero scores"
         )
 
-        # Build a content-to-index map to avoid object identity issues
-        content_to_idx = {}
-        for idx, doc in enumerate(self.documents):
-            content_to_idx[doc.page_content] = idx
-
         # DEBUG: Show what FAISS returned vs what we have
         if faiss_results:
             faiss_doc_ids = [
                 d.metadata.get("document_id") for d, _ in faiss_results[:3]
             ]
             self_doc_ids = [
-                self.documents[i].metadata.get("document_id")
-                for i in content_to_idx.values()
+                self.doc_id_map.get(
+                    str(i), self.documents[i].metadata.get("document_id")
+                )
+                for i in range(min(10, len(self.documents)))
             ]
             logger.info(f"DEBUG FAISS result doc_ids: {faiss_doc_ids}")
-            logger.info(f"DEBUG self.documents doc_ids (first 10): {self_doc_ids[:10]}")
+            logger.info(f"DEBUG self.documents doc_ids (first 10): {self_doc_ids}")
 
-        # Get top results (filter out deleted documents)
+        # Get top results
         results = []
-
-        # RRF fusion: score = Σ 1/(k + rank) for each retriever
         rrf_scores = {}
 
-        # Add FAISS RRF scores
+        # Add FAISS RRF scores - use FAISS's own metadata directly
         for rank, (doc, score) in enumerate(faiss_results):
-            doc_idx = content_to_idx.get(doc.page_content)
-            if doc_idx is None:
-                logger.warning(
-                    f"DEBUG: FAISS doc not found in self.documents by content! FAISS doc_id={doc.metadata.get('document_id')}"
+            # Get document_id directly from FAISS metadata (most reliable)
+            faiss_doc_id = doc.metadata.get("document_id", 0)
+
+            # Find matching document in self.documents by comparing content
+            found_idx = None
+            for idx, stored_doc in enumerate(self.documents):
+                if stored_doc.page_content == doc.page_content:
+                    found_idx = idx
+                    break
+
+            if found_idx is not None:
+                rrf_scores[found_idx] = rrf_scores.get(found_idx, 0) + 1.0 / (
+                    rrf_k + rank
                 )
-                # Skip mismatched documents - this indicates index corruption
-                continue
-            rrf_scores[doc_idx] = rrf_scores.get(doc_idx, 0) + 1.0 / (rrf_k + rank)
+            else:
+                # Use FAISS metadata as fallback
+                rrf_scores[faiss_doc_id] = rrf_scores.get(faiss_doc_id, 0) + 1.0 / (
+                    rrf_k + rank
+                )
 
         # Add BM25 RRF scores
         for rank, idx in enumerate(bm25_top_indices):
