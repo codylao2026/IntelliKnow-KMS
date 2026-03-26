@@ -567,13 +567,8 @@ async def process_query(
                 f"Final result {i + 1}: doc_id={result.get('document_id')}, score={result.get('score', 0):.3f}"
             )
 
-        # Step 5: Rerank if we have results (skip if confidence >= threshold or few results)
-        if confidence >= settings.SKIP_RERANK_CONFIDENCE:
-            reranked_results = search_results[: settings.RERANK_TOP_K]
-            logger.info(
-                f"Skipping reranking (confidence {confidence:.2f} >= {settings.SKIP_RERANK_CONFIDENCE})"
-            )
-        elif len(search_results) <= 2:
+        # Step 5: Rerank if we have enough results (skip if very few results)
+        if len(search_results) <= 2:
             reranked_results = search_results[: settings.RERANK_TOP_K]
             logger.info(f"Skipping reranking (only {len(search_results)} results)")
         else:
@@ -844,11 +839,8 @@ async def process_query_streaming(
 
         yield f"data: {json.dumps({'event': 'search', 'data': {'count': len(search_results)}})}\n\n"
 
-        # Step 5: Rerank if we have results (skip if confidence >= threshold or few results)
-        if confidence >= settings.SKIP_RERANK_CONFIDENCE:
-            reranked_results = search_results[: settings.RERANK_TOP_K]
-            yield f"data: {json.dumps({'event': 'rerank', 'data': {'status': 'skipped', 'reason': 'high_confidence'}})}\n\n"
-        elif len(search_results) <= 2:
+        # Step 5: Rerank if we have enough results (skip if very few results)
+        if len(search_results) <= 2:
             reranked_results = search_results[: settings.RERANK_TOP_K]
             yield f"data: {json.dumps({'event': 'rerank', 'data': {'status': 'skipped', 'reason': 'few_results'}})}\n\n"
         else:

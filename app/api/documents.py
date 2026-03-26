@@ -167,23 +167,29 @@ async def get_document_content(
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     
-    if not os.path.exists(doc.file_path):
-        raise HTTPException(status_code=404, detail="File not found")
-    
-    content = ""
-    
-    try:
-        if doc.file_type == "docx":
-            import docx2txt
-            content = docx2txt.process(doc.file_path)
-        elif doc.file_type == "pdf":
-            from pypdf import PdfReader
-            reader = PdfReader(doc.file_path)
-            for page in reader.pages:
-                content += page.extract_text() or ""
-    except Exception as e:
-        logger.error(f"Error extracting content: {e}")
-        content = f"[Unable to extract content: {str(e)}]"
+    # First, try to use content from database (already parsed during upload)
+    if doc.content:
+        logger.info(f"Using stored content for document {document_id}")
+        content = doc.content
+    else:
+        # Fallback: extract from file if no stored content
+        if not os.path.exists(doc.file_path):
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        content = ""
+        
+        try:
+            if doc.file_type == "docx":
+                import docx2txt
+                content = docx2txt.process(doc.file_path)
+            elif doc.file_type == "pdf":
+                from pypdf import PdfReader
+                reader = PdfReader(doc.file_path)
+                for page in reader.pages:
+                    content += page.extract_text() or ""
+        except Exception as e:
+            logger.error(f"Error extracting content: {e}")
+            content = f"[Unable to extract content: {str(e)}]"
     
     # Create preview (first 500 chars)
     preview = content[:500] + "..." if len(content) > 500 else content

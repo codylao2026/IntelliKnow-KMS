@@ -531,8 +531,10 @@ elif page == "KB Management":
                             st.write(format_status(status))
 
                     with row_cols[7]:
-                        if st.button("👁️ View", key=f"view_{doc_id}"):
+                        # Use link with session state for navigation
+                        if st.button("👁️ View", key=f"view_{doc_id}", help="View document"):
                             st.session_state.view_doc_id = doc_id
+                            st.session_state.current_page = "View Document"
                             st.rerun()
 
                 st.markdown("---")
@@ -1168,6 +1170,7 @@ elif page == "View Document":
 
     if st.button("← Back to Document List", key="btn_back_view"):
         st.session_state.view_doc_id = None
+        st.session_state.current_page = "KB Management"
         st.rerun()
 
     st.markdown(
@@ -1256,12 +1259,14 @@ elif page == "View Document":
                     st.warning(f"Download error: {e}")
 
             with col_update:
-                if st.button(
-                    "🔄 Update Document", key="btn_update_doc", type="primary"
-                ):
-                    st.session_state.update_doc_id = doc_id
-                    st.session_state.view_doc_id = None
-                    st.rerun()
+                # Temporarily disabled - Update functionality available via KB Management list
+                # if st.button(
+                #     "🔄 Update Document", key="btn_update_doc", type="primary"
+                # ):
+                #     st.session_state.update_doc_id = doc_id
+                #     st.session_state.view_doc_id = None
+                #     st.rerun()
+                pass
 
             # Document Content
             st.markdown("---")

@@ -76,6 +76,8 @@ def parse_document(file_path: str, extract_tables: bool = True) -> str:
             return _parse_pdf(file_path, extract_tables=extract_tables)
         elif ext == ".docx":
             return _parse_docx(file_path, extract_tables=extract_tables)
+        elif ext == ".txt":
+            return _parse_txt(file_path)
         else:
             raise ValueError(f"Unsupported file type: {ext}")
     except Exception as e:
@@ -436,6 +438,20 @@ def format_tables_with_llm(tables: List[Dict], document_context: str = "") -> st
     except Exception as e:
         logger.warning(f"LLM table formatting failed: {e}")
         return ""
+
+
+def _parse_txt(file_path: str) -> str:
+    """
+    Parse plain text file
+
+    Args:
+        file_path: Path to TXT file
+
+    Returns:
+        File content as string
+    """
+    with open(file_path, 'r', encoding='utf-8') as f:
+        return f.read()
 
 
 def _parse_docx(file_path: str, extract_tables: bool = True) -> str:

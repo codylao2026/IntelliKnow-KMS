@@ -55,16 +55,29 @@ async def process_document(document_id: int, db: AsyncSession, force_rechunk: bo
                 logger.warning(f"Could not delete from vector store: {e}")
 
         # Parse document - always prefer database content if it exists (edited content)
-        if document.content:
+        # Only re-parse if force_rechunk=True or no content exists
+        old_content = document.content if document.content else ""
+        is_error_content = old_content.startswith("[Unable to extract")
+        
+        if document.content and not force_rechunk and not is_error_content:
             # Use content from database (could be edited content)
             logger.info(f"Using database content for document {document_id}, length: {len(document.content)}")
             content = document.content
         else:
-            # No content in database, parse from file
+            # Parse from file (or re-parse for rechunk)
             logger.info(f"Parsing document from file: {document.file_path}")
             content = parse_document(document.file_path)
-            document.content = content
-            logger.info(f"Document {document_id} parsed from file, content length: {len(content)}")
+            
+            # Only update content if parsing succeeded
+            if content and not content.startswith("[Unable to extract"):
+                document.content = content
+                logger.info(f"Document {document_id} parsed from file, content length: {len(content)}")
+            elif is_error_content:
+                # Keep old content if new parsing failed
+                content = old_content
+                logger.warning(f"Keeping old content for document {document_id} - new parse failed")
+            else:
+                logger.warning(f"Document {document_id} parse returned empty content")
 
         # Split into chunks
         chunks = split_text_into_chunks(content)
