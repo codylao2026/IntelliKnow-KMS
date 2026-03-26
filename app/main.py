@@ -33,6 +33,21 @@ async def lifespan(app: FastAPI):
     await init_db()
     logger.info("Database initialized")
 
+    # Rebuild vector store from database on startup (ensures consistency)
+    try:
+        from app.utils.vectorstore import rebuild_vector_store_from_db
+        from app.utils.database import async_session_maker
+
+        async with async_session_maker() as session:
+            await rebuild_vector_store_from_db(session)
+        logger.info("✅ Vector store rebuilt from database")
+    except Exception as e:
+        logger.error(f"❌ Vector store rebuild failed: {e}")
+        # Fallback to loading from disk
+        from app.utils.vectorstore import get_vector_store
+
+        get_vector_store()
+
     # Initialize Feishu client after FastAPI is ready
     try:
         from app.services.frontend.feishu import get_feishu_client
