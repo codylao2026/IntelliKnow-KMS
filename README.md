@@ -74,9 +74,9 @@ streamlit run frontend/app.py
 - [x] Project initialization
 - [x] Core module development (RAG, intent classification, hybrid search)
 - [x] Frontend integration (Telegram, Feishu)
-- [ ] Testing & optimization
+- [x] Testing & optimization
 - [ ] Production deployment
 
 ---
 
-**Last Updated**: 2026-03-25
+**Last Updated**: 2026-03-26
